@@ -24,7 +24,7 @@ from fastapi.staticfiles import StaticFiles
 from ptyprocess import PtyProcessUnicode
 from watchfiles import awatch
 
-from .cells import parse_cells
+from .cells import parse_cells, replace_cell_source
 from .kernel import FileKernel
 
 STATIC = Path(__file__).parent / "static"
@@ -134,6 +134,25 @@ def create_app(file: Path) -> FastAPI:
                 elif msg["type"] == "run_all":
                     for cid in [c.id for c in session.cells]:
                         session.executor.submit(session.run_cell_blocking, cid)
+                elif msg["type"] == "edit":
+                    # replace one cell's source on disk; the browser edit and an
+                    # AI's file edit are the same path — the file is the truth
+                    try:
+                        old = next(c for c in session.cells if c.id == msg["cell"])
+                        new_text = replace_cell_source(
+                            session.file.read_text(), msg["cell"], msg["source"])
+                    except (KeyError, StopIteration):
+                        await ws.send_text(json.dumps(
+                            {"type": "edit_rejected", "cell": msg["cell"],
+                             "reason": "cell changed on disk; re-open it"}))
+                        continue
+                    session.file.write_text(new_text)
+                    session.reparse()
+                    await session.send_all(session.cells_msg())
+                    if msg.get("run"):
+                        cell = next((c for c in session.cells if c.idx == old.idx), None)
+                        if cell:
+                            session.executor.submit(session.run_cell_blocking, cell.id)
                 elif msg["type"] == "restart":
                     if session.kernel:
                         await asyncio.get_running_loop().run_in_executor(

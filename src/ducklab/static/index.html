@@ -2,6 +2,7 @@
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>ducklab</title>
 <link rel="stylesheet" href="/static/vendor/xterm.css">
+<link rel="stylesheet" href="/static/vendor/codemirror.css">
 <style>
 :root{--bg:#f6f5f1;--card:#ffffff;--ink:#1c1e21;--muted:#6a6f76;--rule:#e3e0d8;
  --accent:#3a5a46;--accent-ink:#fff;--err:#a6392f;--busy:#8a641c;--code:#f0eee8}
@@ -37,6 +38,13 @@ pre.code{margin:0;padding:12px 14px;background:var(--code);font-family:ui-monosp
 .spin{font-size:11px;color:var(--busy);padding:0 12px 8px;display:none}
 .cell.busy .spin{display:block}
 @media(max-width:600px){body{font-size:14px}.wrap{padding:10px 8px 80px}pre.code{font-size:11.5px}}
+.CodeMirror{height:auto;background:var(--code);color:var(--ink);font-family:ui-monospace,Menlo,monospace;font-size:12.5px;line-height:1.5}
+.CodeMirror-gutters{background:var(--code);border-right:1px solid var(--rule)}
+.CodeMirror-linenumber{color:var(--muted)}
+.editbar{display:none;gap:8px;padding:7px 12px;border-top:1px solid var(--rule)}
+.cell.editing .editbar{display:flex}
+.cell.editing pre.code{display:none}
+.cm-holder{display:none}.cell.editing .cm-holder{display:block}
 #termwrap{position:fixed;left:0;right:0;bottom:0;z-index:9;background:#111;border-top:2px solid var(--rule);
  height:42vh;display:none;flex-direction:column}
 #termwrap.open{display:flex}
@@ -78,6 +86,8 @@ function handle(m){
     paintOut(m.cell);
   } else if(m.type==="clear"){
     outputs[m.cell] = []; paintOut(m.cell);
+  } else if(m.type==="edit_rejected"){
+    alert("Edit rejected: " + m.reason);
   } else if(m.type==="status"){
     const el = document.getElementById("cell-"+m.cell);
     if(el) el.classList.toggle("busy", m.state==="busy");
@@ -85,18 +95,31 @@ function handle(m){
 }
 
 function render(cells){
+  for(const k of Object.keys(editors)) delete editors[k];  // DOM is rebuilt; drop stale editors
   $cells.innerHTML = "";
   for(const c of cells){
     const d = document.createElement("div");
     d.className = "cell"; d.id = "cell-"+c.id;
     d.innerHTML = `
       <div class="chead"><span class="t">[${c.idx}] ${c.title||("L"+c.lineno)}</span>
+        <button data-edit="${c.id}">Edit</button>
         <button data-run="${c.id}">Run</button></div>
       <pre class="code"></pre>
+      <div class="cm-holder"></div>
+      <div class="editbar">
+        <button data-save="${c.id}" class="primary">Save</button>
+        <button data-saverun="${c.id}">Save &amp; Run</button>
+        <button data-cancel="${c.id}">Cancel</button>
+        <span style="flex:1"></span><span style="font-size:11px;color:var(--muted)">⌘/Ctrl+Enter = Save &amp; Run</span>
+      </div>
       <div class="spin">running…</div>
       <div class="out" id="out-${c.id}"></div>`;
     d.querySelector("pre.code").textContent = c.source;
     d.querySelector("[data-run]").onclick = () => send({type:"run", cell:c.id});
+    d.querySelector("[data-edit]").onclick = () => openEditor(c);
+    d.querySelector("[data-save]").onclick = () => saveEditor(c.id, false);
+    d.querySelector("[data-saverun]").onclick = () => saveEditor(c.id, true);
+    d.querySelector("[data-cancel]").onclick = () => closeEditor(c.id);
     $cells.appendChild(d);
     paintOut(c.id);
   }
@@ -123,6 +146,31 @@ document.getElementById("runall").onclick = () => send({type:"run_all"});
 document.getElementById("restart").onclick = () => { if(confirm("Restart kernel? All state is lost.")) send({type:"restart"}); };
 connect();
 
+// ---- inline cell editor (CodeMirror) ----
+const editors = {};   // cell id -> CodeMirror
+function openEditor(c){
+  const card = document.getElementById("cell-"+c.id);
+  if(!card || editors[c.id]) { if(editors[c.id]) editors[c.id].focus(); return; }
+  card.classList.add("editing");
+  const cm = CodeMirror(card.querySelector(".cm-holder"), {
+    value: c.source, mode: "python", lineNumbers: true, indentUnit: 4,
+    viewportMargin: Infinity,
+    extraKeys: {"Cmd-Enter": () => saveEditor(c.id, true),
+                "Ctrl-Enter": () => saveEditor(c.id, true)},
+  });
+  editors[c.id] = cm; cm.focus();
+}
+function closeEditor(id){
+  const card = document.getElementById("cell-"+id);
+  if(card) card.classList.remove("editing");
+  if(editors[id]){ editors[id].getWrapperElement().remove(); delete editors[id]; }
+}
+function saveEditor(id, run){
+  if(!editors[id]) return;
+  send({type:"edit", cell:id, source: editors[id].getValue(), run: !!run});
+  closeEditor(id);
+}
+
 // ---- terminal (xterm + pty over ws) ----
 let term=null, tws=null, fit=null;
 const termwrap=document.createElement("div"); termwrap.id="termwrap";
@@ -147,6 +195,8 @@ function closeTerm(){ termwrap.classList.remove("open"); document.body.classList
 document.getElementById("termtoggle").onclick=()=>termwrap.classList.contains("open")?closeTerm():openTerm();
 termwrap.addEventListener("click",(e)=>{ if(e.target.id==="termclose") closeTerm(); });
 </script>
+<script src="/static/vendor/codemirror.js"></script>
+<script src="/static/vendor/cm-python.js"></script>
 <script src="/static/vendor/xterm.js"></script>
 <script src="/static/vendor/xterm-fit.js"></script>
 </body></html>
