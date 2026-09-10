@@ -355,6 +355,15 @@ function paintOut(id){
   flush();
 }
 
+// intercept the browser's Save; map Cmd/Ctrl+S to "save open editor(s)"
+document.addEventListener("keydown",(e)=>{
+  if((e.metaKey||e.ctrlKey) && (e.key==="s"||e.key==="S")){
+    e.preventDefault();
+    const ids=Object.keys(editors);
+    if(ids.length){ ids.forEach(id=>saveEditor(id,false)); showToast("셀 저장됨"); }
+  }
+}, true);
+
 // ---- command-mode selection + Jupyter-style shortcuts ----
 function applySel(){
   document.querySelectorAll(".cell.sel").forEach(el=>el.classList.remove("sel"));
@@ -448,6 +457,8 @@ function openEditor(c){
     extraKeys: {"Cmd-Enter": () => saveEditor(c.id, true),
                 "Ctrl-Enter": () => saveEditor(c.id, true),
                 "Shift-Enter": () => { saveEditor(c.id, true); selectRel(1); },
+                "Cmd-S": () => { saveEditor(c.id, false); showToast("셀 저장됨"); },
+                "Ctrl-S": () => { saveEditor(c.id, false); showToast("셀 저장됨"); },
                 "Esc": () => { closeEditor(c.id); const card=document.getElementById("cell-"+c.id); card&&card.focus&&card.focus(); }},
   });
   editors[c.id] = cm; cm.focus();
