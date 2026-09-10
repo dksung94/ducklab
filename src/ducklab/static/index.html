@@ -47,6 +47,16 @@ pre.code{margin:0;padding:12px 14px;background:var(--code);font-family:ui-monosp
 .out img{max-width:100%;border-radius:8px;margin:8px 0;display:block;background:#fff}
 .spin{font-size:11px;color:var(--busy);padding:0 12px 8px;display:none}
 .cell.busy .spin{display:block}
+.askbar{display:none;gap:8px;padding:8px 12px;border-top:1px solid var(--rule);align-items:center;background:var(--code)}
+.cell.asking .askbar{display:flex}
+.askbar input{flex:1;font:13px ui-sans-serif,-apple-system,sans-serif;color:var(--ink);background:var(--card);
+ border:1px solid var(--rule);border-radius:8px;padding:7px 11px;min-width:0}
+.askbar input:focus{outline:2px solid var(--accent);outline-offset:-1px}
+.askbar button{flex:none;padding:6px 13px;font-size:12.5px}
+.askbar .hint{flex:none;font-size:10.5px;color:var(--faint)}
+#toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);z-index:30;background:var(--ink);color:var(--bg);
+ font-size:13px;padding:8px 16px;border-radius:9px;opacity:0;transition:opacity .2s;pointer-events:none}
+#toast.on{opacity:.92}
 @media (prefers-color-scheme:dark){pre.code.cm-s-dracula{background:#282a36}}
 @media(max-width:600px){body{font-size:14px}.wrap{padding:10px 8px 80px}pre.code{font-size:11.5px}}
 .CodeMirror{height:auto;background:var(--code);color:var(--ink);font-family:ui-monospace,Menlo,monospace;font-size:12.5px;line-height:1.5}
@@ -187,9 +197,15 @@ function render(cells){
     d.className = "cell"; d.id = "cell-"+c.id;
     d.innerHTML = `
       <div class="chead"><span class="idx">${c.idx}</span><span class="t">${c.title||('<span class="ln">L'+c.lineno+"</span>")}</span>
+        <button data-ask="${c.id}" title="이 셀에 대해 AI에게 지시">AI</button>
         <button data-edit="${c.id}">Edit</button>
         <button data-run="${c.id}">Run</button></div>
       <pre class="code"></pre>
+      <div class="askbar">
+        <input type="text" placeholder="이 셀에 대해 AI에게… (Enter = 터미널로 전달, Esc = 닫기)">
+        <span class="hint">→ terminal</span>
+        <button data-asksend="${c.id}" class="primary">보내기</button>
+      </div>
       <div class="cm-holder"></div>
       <div class="editbar">
         <button data-save="${c.id}" class="primary">Save</button>
@@ -202,6 +218,13 @@ function render(cells){
     const pc = d.querySelector("pre.code"); pc.dataset.src = c.source; paintCode(pc, c.source);
     d.querySelector("[data-run]").onclick = () => send({type:"run", cell:c.id});
     d.querySelector("[data-edit]").onclick = () => openEditor(c);
+    d.querySelector("[data-ask]").onclick = () => toggleAsk(c.id);
+    d.querySelector("[data-asksend]").onclick = () => sendAsk(c);
+    const ai = d.querySelector(".askbar input");
+    ai.addEventListener("keydown", (ev)=>{
+      if(ev.key==="Enter") sendAsk(c);
+      else if(ev.key==="Escape") toggleAsk(c.id, false);
+    });
     d.querySelector("[data-save]").onclick = () => saveEditor(c.id, false);
     d.querySelector("[data-saverun]").onclick = () => saveEditor(c.id, true);
     d.querySelector("[data-cancel]").onclick = () => closeEditor(c.id);
@@ -255,6 +278,33 @@ function saveEditor(id, run){
   if(!editors[id]) return;
   send({type:"edit", cell:id, source: editors[id].getValue(), run: !!run});
   closeEditor(id);
+}
+
+// ---- per-cell ask-the-AI ----
+const toast=document.createElement("div"); toast.id="toast"; document.body.appendChild(toast);
+let toastT=null;
+function showToast(msg){ toast.textContent=msg; toast.classList.add("on");
+  clearTimeout(toastT); toastT=setTimeout(()=>toast.classList.remove("on"), 2200); }
+function toggleAsk(id, force){
+  const card=document.getElementById("cell-"+id); if(!card) return;
+  const on = force!==undefined ? force : !card.classList.contains("asking");
+  document.querySelectorAll(".cell.asking").forEach(el=>el.classList.remove("asking"));
+  if(on){ card.classList.add("asking"); card.querySelector(".askbar input").focus(); }
+}
+function termWrite(text){ if(tws && tws.readyState===1){ tws.send(JSON.stringify({type:"in",data:text})); return true; } return false; }
+function sendAsk(c){
+  const card=document.getElementById("cell-"+c.id); if(!card) return;
+  const inp=card.querySelector(".askbar input");
+  const text=inp.value.trim(); if(!text) return;
+  const label=c.title || ("L"+c.lineno);
+  const msg=`셀 [${c.idx}] "${label}" 에 대해: ${text}`;
+  const deliver=()=>{ termWrite(msg + "\r"); showToast("터미널의 AI에게 전달됨"); };
+  if(termWrite("")) { deliver(); }
+  else { // 터미널이 닫혀 있으면 열고, 에이전트가 뜰 시간을 준 뒤 전달
+    openTerm(); showToast("터미널 여는 중… 곧 전달됩니다");
+    setTimeout(deliver, 5000);
+  }
+  inp.value=""; toggleAsk(c.id, false);
 }
 
 // ---- files drawer ----
