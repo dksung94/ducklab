@@ -74,10 +74,16 @@ class FileKernel:
             msg_id = self.kc.execute(code)
             while True:
                 try:
-                    msg = self.kc.get_iopub_msg(timeout=120)
+                    # Short poll, no overall deadline: a long-running cell
+                    # (time.sleep, a training loop) legitimately produces no
+                    # iopub traffic for minutes. Silence is only fatal when the
+                    # kernel process itself is gone.
+                    msg = self.kc.get_iopub_msg(timeout=5)
                 except queue.Empty:
-                    on_output({"kind": "error", "data": "[ducklab] timeout waiting for kernel"})
-                    return
+                    if not self.km.is_alive():
+                        on_output({"kind": "error", "data": "[ducklab] kernel died"})
+                        return
+                    continue
                 if msg.get("parent_header", {}).get("msg_id") != msg_id:
                     continue
                 t, c = msg["msg_type"], msg["content"]

@@ -248,6 +248,13 @@ class Session:
             self.kernel = FileKernel(self.python) if self.python else FileKernel()
         return self.kernel
 
+    def submit_run(self, cell_id: str):
+        """Enqueue a run on the session's FIFO worker, telling clients the cell
+        is queued the moment it is enqueued -- a run waiting behind a long cell
+        was previously indistinguishable from one that never started."""
+        self.send_threadsafe({"type": "status", "state": "queued", "cell": cell_id})
+        return self.executor.submit(self.run_cell_blocking, cell_id)
+
     def run_cell_blocking(self, cell_id: str):
         cell = next((c for c in self.cells if c.id == cell_id), None)
         if cell is None:
@@ -484,7 +491,7 @@ def create_app(root: Path, initial: str | None = None, host: str = "127.0.0.1",
         cell = s.find_cell(ref)
         if cell is None:
             return {"ok": False, "error": f"no cell {ref!r}; see /api/cells"}
-        fut = s.executor.submit(s.run_cell_blocking, cell.id)
+        fut = s.submit_run(cell.id)
         if wait:
             await asyncio.wrap_future(fut)
             return {"ok": True, "cell": cell.idx, "outputs": s.outputs_view(cell.id)}
@@ -493,7 +500,7 @@ def create_app(root: Path, initial: str | None = None, host: str = "127.0.0.1",
     @app.post("/api/run_all")
     async def api_run_all(file: str | None = None, wait: bool = True):
         s = hub.session(file)
-        futs = [(c, s.executor.submit(s.run_cell_blocking, c.id)) for c in s.cells]
+        futs = [(c, s.submit_run(c.id)) for c in s.cells]
         if wait:
             for _, fut in futs:
                 await asyncio.wrap_future(fut)
@@ -734,10 +741,15 @@ def create_app(root: Path, initial: str | None = None, host: str = "127.0.0.1",
             while True:
                 msg = json.loads(await ws.receive_text())
                 if msg["type"] == "run":
-                    session.executor.submit(session.run_cell_blocking, msg["cell"])
+                    session.submit_run(msg["cell"])
                 elif msg["type"] == "run_all":
                     for cid in [c.id for c in session.cells]:
-                        session.executor.submit(session.run_cell_blocking, cid)
+                        session.submit_run(cid)
+                elif msg["type"] == "interrupt":
+                    # SIGINT the kernel: the running cell raises
+                    # KeyboardInterrupt and the FIFO drains normally.
+                    if session.kernel:
+                        session.kernel.interrupt()
                 elif msg["type"] == "edit":
                     # replace one cell's source on disk; a browser edit and an
                     # AI's file edit are the same path — the file is the truth

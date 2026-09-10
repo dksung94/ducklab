@@ -27,6 +27,12 @@ button:active{transform:translateY(1px)}
 .wrap{max-width:880px;margin:0 auto;padding:14px 12px 90px}
 .cell{background:var(--card);border:1px solid var(--rule);border-radius:12px;margin:12px 0;overflow:hidden}
 .cell.busy{border-color:var(--busy)}
+.cell.queued{border-color:var(--muted)}
+.qspin{font-size:11px;color:var(--muted);padding:0 12px 8px;display:none}
+.cell.queued .qspin{display:block}
+.spin .stopbtn{margin-left:8px;font-size:11px;padding:1px 8px;color:var(--err);
+  border:1px solid var(--err);background:none;border-radius:6px;cursor:pointer}
+.spin .stopbtn:hover{background:var(--err);color:#fff}
 @keyframes cellflash{0%{border-color:var(--accent);box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 35%,transparent)}100%{border-color:var(--rule);box-shadow:none}}
 .cell.flash{animation:cellflash 1.6s ease-out}
 .chead{display:flex;align-items:center;gap:9px;padding:7px 10px 7px 12px;border-bottom:1px solid var(--rule)}
@@ -200,8 +206,28 @@ function handle(m){
     alert("Edit rejected: " + m.reason);
   } else if(m.type==="status"){
     const el = document.getElementById("cell-"+m.cell);
-    if(el) el.classList.toggle("busy", m.state==="busy");
+    if(el){
+      el.classList.toggle("busy", m.state==="busy");
+      // queued shows only until the run actually starts; busy/idle both end it
+      el.classList.toggle("queued", m.state==="queued");
+      if(m.state==="busy"){ busyStart[m.cell] = Date.now(); tickBusy(); }
+      else delete busyStart[m.cell];
+    }
   }
+}
+
+// Elapsed-time ticker for running cells: "running… 12s" beats guessing whether
+// anything is happening during a quiet long-running cell.
+const busyStart = {};
+let busyTimer = null;
+function tickBusy(){
+  const ids = Object.keys(busyStart);
+  for(const id of ids){
+    const el = document.querySelector(`#cell-${CSS.escape(id)} .spin .elapsed`);
+    if(el) el.textContent = Math.round((Date.now()-busyStart[id])/1000)+"s";
+  }
+  if(ids.length && !busyTimer) busyTimer = setInterval(tickBusy, 1000);
+  if(!ids.length && busyTimer){ clearInterval(busyTimer); busyTimer = null; }
 }
 
 const darkMq = window.matchMedia("(prefers-color-scheme: dark)");
@@ -242,10 +268,13 @@ function render(cells){
         <button data-cancel="${c.id}">Cancel</button>
         <span style="flex:1"></span><span style="font-size:11px;color:var(--muted)">⌘/Ctrl+Enter = Save &amp; Run</span>
       </div>
-      <div class="spin">running…</div>
+      <div class="spin">running… <span class="elapsed"></span>
+        <button class="stopbtn" data-stop="${c.id}" title="커널에 SIGINT — 실행 중인 셀이 KeyboardInterrupt로 멈춥니다">■ stop</button></div>
+      <div class="qspin">queued… (앞 셀 실행이 끝나면 시작)</div>
       <div class="out" id="out-${c.id}"></div>`;
     const pc = d.querySelector("pre.code"); pc.dataset.src = c.source; paintCode(pc, c.source);
     d.querySelector("[data-run]").onclick = () => send({type:"run", cell:c.id});
+    d.querySelector("[data-stop]").onclick = () => send({type:"interrupt"});
     d.querySelector("[data-edit]").onclick = () => openEditor(c);
     d.querySelector("[data-ask]").onclick = () => toggleAsk(c.id);
     d.querySelector("[data-asksend]").onclick = () => sendAsk(c);
