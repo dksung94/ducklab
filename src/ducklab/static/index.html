@@ -108,6 +108,11 @@ pre.code{margin:0;padding:12px 14px;background:var(--code);font-family:ui-monosp
 .cell.editing .editbar{display:flex}
 .cell.editing pre.code{display:none}
 .cm-holder{display:none}.cell.editing .cm-holder{display:block}
+.celltitle{display:none;width:100%;box-sizing:border-box;font:13px ui-monospace,Menlo,monospace;color:var(--ink);
+ background:var(--code);border:1px solid var(--rule);border-radius:8px 8px 0 0;border-bottom:0;padding:7px 12px}
+.celltitle:focus{outline:none;border-color:var(--accent)}
+.cell.editing .celltitle{display:block}
+.cell.editing .cm-holder .CodeMirror{border-radius:0 0 6px 6px}
 #drawer{position:fixed;top:0;left:0;bottom:0;z-index:15;width:min(320px,85vw);background:var(--card);
  border-right:1px solid var(--rule);transform:translateX(-100%);transition:transform .18s ease;display:flex;flex-direction:column}
 #drawer.open{transform:none}
@@ -296,6 +301,7 @@ function render(cells){
         <span class="hint">→ terminal</span>
         <button data-asksend="${c.id}" class="primary">보내기</button>
       </div>
+      <input class="celltitle" placeholder="# %% 셀 제목 (선택)">
       <div class="cm-holder"></div>
       <div class="editbar">
         <button data-save="${c.id}" class="primary">Save</button>
@@ -431,6 +437,10 @@ function openEditor(c){
   const card = document.getElementById("cell-"+c.id);
   if(!card || editors[c.id]) { if(editors[c.id]) editors[c.id].focus(); return; }
   card.classList.add("editing");
+  const ti = card.querySelector(".celltitle");
+  ti.value = c.title || "";
+  ti.style.display = (c.marker===false) ? "none" : "block";  // preamble has no marker line
+  ti.onkeydown = (ev)=>{ if(ev.key==="Escape") closeEditor(c.id); };
   const cm = CodeMirror(card.querySelector(".cm-holder"), {
     value: c.source, mode: "python", lineNumbers: true, indentUnit: 4,
     theme: darkMq.matches ? "dracula" : "default",
@@ -449,7 +459,11 @@ function closeEditor(id){
 }
 function saveEditor(id, run){
   if(!editors[id]) return;
-  send({type:"edit", cell:id, source: editors[id].getValue(), run: !!run});
+  const card=document.getElementById("cell-"+id);
+  const ti=card && card.querySelector(".celltitle");
+  const msg={type:"edit", cell:id, source: editors[id].getValue(), run: !!run};
+  if(ti && ti.style.display!=="none") msg.title = ti.value.trim();
+  send(msg);
   closeEditor(id);
 }
 

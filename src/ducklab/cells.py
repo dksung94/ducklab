@@ -103,3 +103,18 @@ def insert_cell(text: str, ref_id: str, where: str = "below", title: str = "") -
             out = lines[:at] + block + lines[at:]
             return "\n".join(out) + _eol(text)
     raise KeyError(ref_id)
+
+
+def replace_cell(text: str, cell_id: str, new_source: str, new_title=None) -> str:
+    """Replace a cell's source and, when it has a '# %%' marker and new_title is
+    given, its title on that marker line. Raises KeyError if the id is gone."""
+    lines = text.splitlines()
+    for c in parse_cells(text):
+        if c.id == cell_id:
+            out = list(lines)
+            new_src = new_source.rstrip("\n").splitlines()
+            out[c.src_begin:c.src_end] = new_src            # marker sits before src_begin, unaffected
+            if new_title is not None and c.marker_line >= 0:
+                out[c.marker_line] = ("# %% " + new_title).rstrip()
+            return "\n".join(out) + ("\n" if text.endswith("\n") else "")
+    raise KeyError(cell_id)

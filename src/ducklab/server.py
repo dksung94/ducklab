@@ -34,7 +34,7 @@ from fastapi.staticfiles import StaticFiles
 from ptyprocess import PtyProcessUnicode
 from watchfiles import awatch
 
-from .cells import delete_cell, insert_cell, parse_cells, replace_cell_source
+from .cells import delete_cell, insert_cell, parse_cells, replace_cell, replace_cell_source
 from .kernel import FileKernel
 
 STATIC = Path(__file__).parent / "static"
@@ -301,7 +301,8 @@ class Session:
     def cells_msg(self) -> dict:
         return {"type": "cells", "file": self.rel,
                 "cells": [{"id": c.id, "idx": c.idx, "title": c.title,
-                           "source": c.source, "lineno": c.lineno} for c in self.cells]}
+                           "source": c.source, "lineno": c.lineno,
+                           "marker": c.marker_line >= 0} for c in self.cells]}
 
     def shutdown(self):
         if self.kernel:
@@ -784,8 +785,9 @@ def create_app(root: Path, initial: str | None = None, host: str = "127.0.0.1",
                     # AI's file edit are the same path — the file is the truth
                     try:
                         old = next(c for c in session.cells if c.id == msg["cell"])
-                        new_text = replace_cell_source(
-                            session.file.read_text(), msg["cell"], msg["source"])
+                        new_text = replace_cell(
+                            session.file.read_text(), msg["cell"], msg["source"],
+                            msg.get("title"))
                     except (KeyError, StopIteration):
                         await ws.send_text(json.dumps(
                             {"type": "edit_rejected", "cell": msg["cell"],
