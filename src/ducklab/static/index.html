@@ -45,6 +45,18 @@ pre.code{margin:0;padding:12px 14px;background:var(--code);font-family:ui-monosp
 .cell.editing .editbar{display:flex}
 .cell.editing pre.code{display:none}
 .cm-holder{display:none}.cell.editing .cm-holder{display:block}
+#settings{position:fixed;inset:0;z-index:20;display:none;align-items:center;justify-content:center;background:rgba(0,0,0,.45)}
+#settings.open{display:flex}
+#settings .panel{background:var(--card);border:1px solid var(--rule);border-radius:14px;width:min(620px,92vw);
+ max-height:86vh;overflow:auto;padding:20px}
+#settings h3{margin:0 0 4px;font-size:16px}
+#settings .hint{font-size:12px;color:var(--muted);margin:0 0 14px}
+#settings label{display:block;font-size:12px;font-weight:600;color:var(--muted);margin:12px 0 4px}
+#settings input[type=text],#settings textarea{width:100%;font:12.5px ui-monospace,Menlo,monospace;color:var(--ink);
+ background:var(--code);border:1px solid var(--rule);border-radius:8px;padding:8px 10px}
+#settings textarea{min-height:180px;resize:vertical;line-height:1.5}
+#settings .row{display:flex;gap:8px;margin-top:16px;align-items:center}
+#settings .row .sp{flex:1;font-size:11px;color:var(--muted)}
 #termwrap{position:fixed;left:0;right:0;bottom:0;z-index:9;background:#111;border-top:2px solid var(--rule);
  height:42vh;display:none;flex-direction:column}
 #termwrap.open{display:flex}
@@ -59,6 +71,7 @@ body.termopen .wrap{padding-bottom:calc(42vh + 60px)}
   <button id="runall" class="primary">Run All</button>
   <button id="restart">Restart</button>
   <button id="termtoggle">Terminal</button>
+  <button id="settingsbtn" title="settings">⚙</button>
 </div>
 <div class="wrap" id="cells"></div>
 <script>
@@ -170,6 +183,43 @@ function saveEditor(id, run){
   send({type:"edit", cell:id, source: editors[id].getValue(), run: !!run});
   closeEditor(id);
 }
+
+// ---- settings modal ----
+const settings=document.createElement("div"); settings.id="settings";
+settings.innerHTML=`<div class="panel">
+  <h3>Settings</h3>
+  <p class="hint">터미널을 열 때 자동 실행되는 에이전트와, 그 에이전트에게 주입되는 컨텍스트 프롬프트.
+     저장은 파일 옆 <code>.ducklab.json</code> — <b>다음에 여는 터미널부터</b> 적용.</p>
+  <label>Agent command (claude · codex · 빈칸 = 셸만)</label>
+  <input type="text" id="cfg-agent" placeholder="claude">
+  <label>Context prompt — 플레이스홀더 {file} {url} · 빈칸 = 프롬프트 없이 실행</label>
+  <textarea id="cfg-prompt"></textarea>
+  <div class="row">
+    <button id="cfg-default">기본 프롬프트로</button>
+    <span class="sp" id="cfg-note"></span>
+    <button id="cfg-cancel">Cancel</button>
+    <button id="cfg-save" class="primary">Save</button>
+  </div></div>`;
+document.body.appendChild(settings);
+let cfgDefault="";
+async function openSettings(){
+  const r=await fetch("/api/config"); const c=await r.json();
+  document.getElementById("cfg-agent").value=c.agent||"";
+  document.getElementById("cfg-prompt").value=c.prompt_template||"";
+  cfgDefault=c.default_prompt||"";
+  document.getElementById("cfg-note").textContent=c.overridden_by_cli?"주의: --term-cmd CLI 오버라이드가 켜져 있어 설정이 무시됩니다":"";
+  settings.classList.add("open");
+}
+document.getElementById("settingsbtn").onclick=openSettings;
+settings.addEventListener("click",e=>{ if(e.target===settings) settings.classList.remove("open"); });
+document.getElementById("cfg-cancel").onclick=()=>settings.classList.remove("open");
+document.getElementById("cfg-default").onclick=()=>{document.getElementById("cfg-prompt").value=cfgDefault;};
+document.getElementById("cfg-save").onclick=async()=>{
+  await fetch("/api/config",{method:"POST",headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({agent:document.getElementById("cfg-agent").value,
+                         prompt_template:document.getElementById("cfg-prompt").value})});
+  settings.classList.remove("open");
+};
 
 // ---- terminal (xterm + pty over ws) ----
 let term=null, tws=null, fit=null;

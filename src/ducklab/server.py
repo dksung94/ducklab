@@ -113,28 +113,53 @@ class Session:
                            "source": c.source, "lineno": c.lineno} for c in self.cells]}
 
 
-def default_term_cmd(file: Path, host: str, port: int) -> str:
-    """Launch the pairing AI with context: which file this session serves and
-    what its role is, so the agent doesn't start blind."""
-    base = f"http://{host}:{port}"
-    prompt = (
-        f"ducklab pairing session. The file {file} is served as live notebook "
-        f"cells at {base} — every edit you make to it re-renders in the browser "
-        "instantly (cells split by '# %%'). You are the researcher pairing on "
-        "this file: read it first, keep the '# %%' cell structure, prefer small "
-        "incremental edits the human can watch land. "
-        "To EXECUTE cells use the HTTP API (cells run on the file's own kernel; "
-        "state persists across runs): "
-        f"list: curl -s {base}/api/cells ; "
-        f"run one (blocks, returns outputs): curl -s -XPOST {base}/api/run/<idx> ; "
-        f"run all: curl -s -XPOST {base}/api/run_all ; "
-        f"read last outputs: curl -s {base}/api/outputs/<idx> . "
-        "Images render in the browser and appear elided in the API."
-    )
-    return f"claude {shlex.quote(prompt)}"
+DEFAULT_PROMPT = (
+    "ducklab pairing session. The file {file} is served as live notebook "
+    "cells at {url} — every edit you make to it re-renders in the browser "
+    "instantly (cells split by '# %%'). You are the researcher pairing on "
+    "this file: read it first, keep the '# %%' cell structure, prefer small "
+    "incremental edits the human can watch land. "
+    "To EXECUTE cells use the HTTP API (cells run on the file's own kernel; "
+    "state persists across runs): "
+    "list: curl -s {url}/api/cells ; "
+    "run one (blocks, returns outputs): curl -s -XPOST {url}/api/run/<idx> ; "
+    "run all: curl -s -XPOST {url}/api/run_all ; "
+    "read last outputs: curl -s {url}/api/outputs/<idx> . "
+    "Images render in the browser and appear elided in the API."
+)
 
 
-def create_app(file: Path, term_cmd: str | None = "claude") -> FastAPI:
+def load_config(dirpath: Path) -> dict:
+    """Per-directory settings (.ducklab.json): which agent command the terminal
+    auto-starts and the context prompt it is handed ({file}/{url} placeholders;
+    empty prompt = launch the agent bare; empty agent = plain shell)."""
+    cfg = {"agent": "claude", "prompt_template": DEFAULT_PROMPT}
+    p = dirpath / ".ducklab.json"
+    if p.exists():
+        try:
+            cfg.update(json.loads(p.read_text()))
+        except Exception:
+            pass
+    return cfg
+
+
+def save_config(dirpath: Path, cfg: dict) -> None:
+    (dirpath / ".ducklab.json").write_text(json.dumps(cfg, indent=2, ensure_ascii=False) + "\n")
+
+
+def build_term_cmd(cfg: dict, file: Path, host: str, port: int) -> str | None:
+    agent = (cfg.get("agent") or "").strip()
+    if not agent:
+        return None
+    tmpl = cfg.get("prompt_template") or ""
+    if not tmpl.strip():
+        return agent
+    prompt = tmpl.replace("{file}", str(file)).replace("{url}", f"http://{host}:{port}")
+    return f"{agent} {shlex.quote(prompt)}"
+
+
+def create_app(file: Path, host: str = "127.0.0.1", port: int = 8787,
+               term_cmd_override: str | None = None) -> FastAPI:
     app = FastAPI()
     session = Session(file)
     app.mount("/static", StaticFiles(directory=STATIC), name="static")
@@ -233,6 +258,21 @@ def create_app(file: Path, term_cmd: str | None = "claude") -> FastAPI:
             return {"ok": False, "error": f"no cell {ref!r}; see /api/cells"}
         return {"ok": True, "cell": cell.idx, "outputs": session.outputs_view(cell.id)}
 
+    @app.get("/api/config")
+    async def api_config_get():
+        cfg = load_config(session.file.parent)
+        return {**cfg, "default_prompt": DEFAULT_PROMPT,
+                "effective_cmd": term_cmd_override if term_cmd_override is not None
+                else build_term_cmd(cfg, session.file, host, port),
+                "overridden_by_cli": term_cmd_override is not None}
+
+    @app.post("/api/config")
+    async def api_config_set(cfg: dict):
+        clean = {"agent": str(cfg.get("agent", "claude")),
+                 "prompt_template": str(cfg.get("prompt_template", DEFAULT_PROMPT))}
+        save_config(session.file.parent, clean)
+        return {"ok": True, "applies": "next terminal opened"}
+
     @app.websocket("/ws/term")
     async def term_endpoint(ws: WebSocket):
         """A real shell over a pty, one per connection. This is arbitrary code
@@ -242,10 +282,13 @@ def create_app(file: Path, term_cmd: str | None = "claude") -> FastAPI:
         shell = os.environ.get("SHELL", "/bin/bash")
         pty = PtyProcessUnicode.spawn(
             [shell, "-l"], dimensions=(24, 80), cwd=str(session.file.parent))
-        if term_cmd:
-            # auto-start the pairing AI (or any command); typed into the shell
-            # so it is visible, and the shell remains after it exits
-            pty.write(term_cmd + "\n")
+        # auto-start the pairing AI (or any command); typed into the shell so
+        # it is visible, and the shell remains after it exits. Config is read
+        # per-connection, so settings changes apply to the next terminal.
+        cmd = term_cmd_override if term_cmd_override is not None else \
+            build_term_cmd(load_config(session.file.parent), session.file, host, port)
+        if cmd:
+            pty.write(cmd + "\n")
 
         def reader():
             while True:
@@ -286,12 +329,10 @@ def main():
     file = Path(args.file).resolve()
     if not file.exists():
         raise SystemExit(f"no such file: {file}")
-    if args.term_cmd is None:
-        term_cmd = default_term_cmd(file, args.host, args.port)
-    else:
-        term_cmd = args.term_cmd or None
     print(f"ducklab · {file} · http://{args.host}:{args.port}")
-    uvicorn.run(create_app(file, term_cmd=term_cmd), host=args.host, port=args.port, log_level="warning")
+    uvicorn.run(create_app(file, host=args.host, port=args.port,
+                           term_cmd_override=args.term_cmd),
+                host=args.host, port=args.port, log_level="warning")
 
 
 if __name__ == "__main__":
