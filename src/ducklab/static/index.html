@@ -73,6 +73,12 @@ kbd{font:11.5px ui-monospace,Menlo,monospace;background:var(--code);border:1px s
 .chead .saved{font-size:11px;color:var(--accent);opacity:0;transition:opacity .15s;flex:none;
  font-weight:600;pointer-events:none}
 .chead .saved.on{opacity:1}
+.chead .runbadge{font-size:10.5px;color:var(--muted);font-family:ui-monospace,Menlo,monospace;flex:none}
+#memchip{font-size:11px;color:var(--muted);font-family:ui-monospace,Menlo,monospace;padding:0 4px;white-space:nowrap}
+#runbar{position:fixed;top:0;left:0;height:3px;background:var(--accent);width:0;z-index:30;
+ transition:width .25s ease;box-shadow:0 0 8px var(--accent);display:none}
+#runbar.on{display:block}
+#toast .act{margin-left:12px;color:var(--accent);cursor:pointer;text-decoration:underline;font-weight:600}
 pre.code{margin:0;padding:12px 14px;background:var(--code);font-family:ui-monospace,"SF Mono",Menlo,monospace;
  font-size:12.5px;line-height:1.5;overflow-x:auto;white-space:pre;-webkit-overflow-scrolling:touch}
 .out{padding:8px 14px 12px;display:none;border-top:1px dashed var(--rule)}
@@ -203,11 +209,13 @@ body.termopen-right{padding-right:var(--termw,40vw)}
   <button id="runall" class="primary">Run All</button>
   <button id="restart">Restart</button>
   <button id="clearall" title="모든 셀 출력 지우기">출력 지우기</button>
+  <span id="memchip"></span>
   <button id="envchip" title="python environment">env</button>
   <button id="termtoggle">Terminal</button>
   <button id="helpbtn" title="단축키 (?)">?</button>
   <button id="settingsbtn" title="settings">⚙</button>
 </div>
+<div id="runbar"></div>
 <div class="wrap" id="cells"></div>
 <script>
 const FILE = new URLSearchParams(location.search).get("file") || "";
@@ -271,15 +279,34 @@ function handle(m){
       el.classList.toggle("busy", m.state==="busy");
       // queued shows only until the run actually starts; busy/idle both end it
       el.classList.toggle("queued", m.state==="queued");
-      if(m.state==="busy"){ busyStart[m.cell] = Date.now(); tickBusy(); }
+      if(m.state==="busy"){ busyStart[m.cell] = Date.now(); tickBusy();
+        if(runAll.active){ el.scrollIntoView({block:"center"}); } }
       else delete busyStart[m.cell];
+      if(m.state==="idle"){
+        const rb=el.querySelector(".runbadge");
+        if(rb && m.elapsed!=null) rb.textContent = m.elapsed<1 ? Math.round(m.elapsed*1000)+"ms" : m.elapsed+"s";
+        if(m.mem!=null){ document.getElementById("memchip").textContent = "RAM "+m.mem+"MB"; }
+        if(runAll.active){ runAll.done++; updateRunbar(); }
+      }
     }
+  } else if(m.type==="runall"){
+    if(m.state==="start"){ runAll={active:true,total:m.total,done:0}; showRunbar(); }
+    else { setTimeout(hideRunbar, 400); runAll.active=false; }
+  } else if(m.type==="restore_outputs"){
+    for(const [id,arr] of Object.entries(m.outputs)){ outputs[id]=arr; paintOut(id); }
+  } else if(m.type==="toast"){
+    showToast(m.text);
   }
 }
 
 // Elapsed-time ticker for running cells: "running… 12s" beats guessing whether
 // anything is happening during a quiet long-running cell.
 const busyStart = {};
+let runAll = {active:false,total:0,done:0};
+const $runbar = () => document.getElementById("runbar");
+function showRunbar(){ const b=$runbar(); b.classList.add("on"); b.style.width="0"; }
+function updateRunbar(){ const b=$runbar(); const pct=runAll.total?Math.min(100,runAll.done/runAll.total*100):0; b.style.width=pct+"%"; }
+function hideRunbar(){ const b=$runbar(); b.classList.remove("on"); b.style.width="0"; }
 let busyTimer = null;
 function tickBusy(){
   const ids = Object.keys(busyStart);
@@ -312,7 +339,7 @@ function render(cells){
     const d = document.createElement("div");
     d.className = "cell"; d.id = "cell-"+c.id;
     d.innerHTML = `
-      <div class="chead"><span class="idx">${c.idx}</span><span class="t">${c.title||('<span class="ln">L'+c.lineno+"</span>")}</span>
+      <div class="chead"><span class="idx">${c.idx}</span><span class="runbadge"></span><span class="t">${c.title||('<span class="ln">L'+c.lineno+"</span>")}</span>
         <span class="saved">✓ 저장됨</span>
         <button data-ask="${c.id}" title="이 셀에 대해 AI에게 지시">AI</button>
         <button data-edit="${c.id}">Edit</button>
@@ -403,6 +430,9 @@ document.addEventListener("keydown",(e)=>{
     const ids=Object.keys(editors);
     if(ids.length){ ids.forEach(id=>saveEditor(id,false)); showToast("셀 저장됨"); }
   }
+  if((e.metaKey||e.ctrlKey) && (e.key==="z"||e.key==="Z") && !Object.keys(editors).length){
+    e.preventDefault(); send({type:"undo"});
+  }
 }, true);
 
 // ---- command-mode selection + Jupyter-style shortcuts ----
@@ -484,12 +514,13 @@ function cellOp(op, c){
   else if(op==="up") send({type:"move",cell:c.id,delta:-1});
   else if(op==="down") send({type:"move",cell:c.id,delta:1});
   else if(op==="clear") send({type:"clear_output",cell:c.id});
-  else if(op==="delete"){ if(confirm(`셀 [${c.idx}] ${c.title||""} 삭제?`)) send({type:"delete",cell:c.id}); }
+  else if(op==="delete"){ if(confirm(`셀 [${c.idx}] ${c.title||""} 삭제?`)){ send({type:"delete",cell:c.id});
+      showToast("셀 삭제됨","실행취소",()=>send({type:"undo"})); } }
 }
 document.addEventListener("click",()=>document.querySelectorAll(".cellmenu.open").forEach(x=>x.classList.remove("open")));
 document.getElementById("runall").onclick = () => send({type:"run_all"});
 document.getElementById("restart").onclick = () => { if(confirm("Restart kernel? All state is lost.")) send({type:"restart"}); };
-document.getElementById("clearall").onclick = () => send({type:"clear_all"});
+document.getElementById("clearall").onclick = () => { send({type:"clear_all"}); showToast("출력 전체 지움","실행취소",()=>send({type:"undo"})); };
 connect();
 
 // ---- inline cell editor (CodeMirror) ----
@@ -535,8 +566,12 @@ function saveEditor(id, run){
 // ---- per-cell ask-the-AI ----
 const toast=document.createElement("div"); toast.id="toast"; document.body.appendChild(toast);
 let toastT=null;
-function showToast(msg){ toast.textContent=msg; toast.classList.add("on");
-  clearTimeout(toastT); toastT=setTimeout(()=>toast.classList.remove("on"), 2200); }
+function showToast(msg, actLabel, actCb){
+  toast.textContent=msg;
+  if(actLabel){ const a=document.createElement("span"); a.className="act"; a.textContent=actLabel;
+    a.onclick=()=>{ actCb&&actCb(); toast.classList.remove("on"); }; toast.appendChild(a); }
+  toast.classList.add("on");
+  clearTimeout(toastT); toastT=setTimeout(()=>toast.classList.remove("on"), actLabel?4500:2200); }
 function toggleAsk(id, force){
   const card=document.getElementById("cell-"+id); if(!card) return;
   const on = force!==undefined ? force : !card.classList.contains("asking");

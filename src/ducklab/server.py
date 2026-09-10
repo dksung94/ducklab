@@ -44,6 +44,17 @@ GLOBAL_PROMPTS = Path.home() / ".ducklab" / "prompts"
 PROMPTS_SUBDIR = ".ducklab/prompts"
 SKIP_DIRS = {".venv", "venv", "node_modules", "__pycache__", ".git", ".ipynb_checkpoints"}
 
+
+def rss_mb(pid) -> float | None:
+    if not pid:
+        return None
+    try:
+        kb = int(subprocess.check_output(["ps", "-o", "rss=", "-p", str(pid)],
+                                         text=True).strip() or 0)
+        return round(kb / 1024, 1)
+    except Exception:
+        return None
+
 DEFAULT_PROMPT = (
     "ducklab pairing session. The file {file} is served as live notebook "
     "cells at {url} — every edit you make to it re-renders in the browser "
@@ -229,6 +240,7 @@ class Session:
         # one worker thread per session: runs are FIFO-ordered and the kernel
         # is only ever created/used from this thread (no creation race)
         self.executor = ThreadPoolExecutor(max_workers=1)
+        self.undo_stack = deque(maxlen=25)   # destructive-op snapshots
 
     async def send_all(self, msg: dict):
         dead = []
@@ -270,12 +282,15 @@ class Session:
 
         self.last_run_at = time.time()
         self.run_count += 1
+        t0 = time.time()
         try:
             self.ensure_kernel().execute(cell.source, on_output)
         except Exception as e:  # surface infra failures as a cell error, never swallow
             on_output({"kind": "error", "data": f"[ducklab] {type(e).__name__}: {e}"})
         finally:
-            self.send_threadsafe({"type": "status", "state": "idle", "cell": cell_id})
+            self.send_threadsafe({"type": "status", "state": "idle", "cell": cell_id,
+                                  "elapsed": round(time.time() - t0, 2),
+                                  "mem": rss_mb(self.kernel.pid if self.kernel else None)})
 
     def reparse(self):
         self.cells = parse_cells(self.file.read_text())
@@ -774,8 +789,12 @@ def create_app(root: Path, initial: str | None = None, host: str = "127.0.0.1",
                 if msg["type"] == "run":
                     session.submit_run(msg["cell"])
                 elif msg["type"] == "run_all":
-                    for cid in [c.id for c in session.cells]:
+                    ids = [c.id for c in session.cells]
+                    await session.send_all({"type": "runall", "state": "start", "total": len(ids)})
+                    for cid in ids:
                         session.submit_run(cid)
+                    session.executor.submit(
+                        lambda: session.send_threadsafe({"type": "runall", "state": "end"}))
                 elif msg["type"] == "interrupt":
                     # SIGINT the kernel: the running cell raises
                     # KeyboardInterrupt and the FIFO drains normally.
@@ -814,6 +833,9 @@ def create_app(root: Path, initial: str | None = None, host: str = "127.0.0.1",
                     try:
                         cur = session.file.read_text()
                         if msg["type"] == "delete":
+                            session.undo_stack.append(
+                                {"kind": "file", "text": cur,
+                                 "outputs": {k: list(v) for k, v in session.outputs.items()}})
                             new_text = delete_cell(cur, msg["cell"])
                         elif msg["type"] == "move":
                             new_text = move_cell(cur, msg["cell"], int(msg.get("delta", 0)))
@@ -825,11 +847,35 @@ def create_app(root: Path, initial: str | None = None, host: str = "127.0.0.1",
                     session.reparse()
                     await session.send_all(session.cells_msg())
                 elif msg["type"] == "clear_output":
-                    session.outputs.pop(msg["cell"], None)
+                    old = session.outputs.pop(msg["cell"], None)
+                    if old:
+                        session.undo_stack.append({"kind": "outputs", "outputs": {msg["cell"]: old}})
                     await session.send_all({"type": "clear", "cell": msg["cell"]})
                 elif msg["type"] == "clear_all":
+                    if session.outputs:
+                        session.undo_stack.append(
+                            {"kind": "outputs",
+                             "outputs": {k: list(v) for k, v in session.outputs.items()}})
                     session.outputs.clear()
                     await session.send_all({"type": "clear_all"})
+                elif msg["type"] == "undo":
+                    if not session.undo_stack:
+                        await ws.send_text(json.dumps({"type": "toast", "text": "되돌릴 작업이 없습니다"}))
+                        continue
+                    e = session.undo_stack.pop()
+                    if e["kind"] == "file":
+                        session.file.write_text(e["text"])
+                        session.reparse()
+                        live = {c.id for c in session.cells}
+                        session.outputs = {k: v for k, v in e["outputs"].items() if k in live}
+                        await session.send_all(session.cells_msg())
+                        await session.send_all({"type": "restore_outputs", "outputs": session.outputs})
+                        await session.send_all({"type": "toast", "text": "삭제 되돌림"})
+                    else:
+                        for cid, arr in e["outputs"].items():
+                            session.outputs[cid] = arr
+                        await session.send_all({"type": "restore_outputs", "outputs": e["outputs"]})
+                        await session.send_all({"type": "toast", "text": "출력 복구됨"})
                 elif msg["type"] == "restart":
                     if session.kernel:
                         await asyncio.get_running_loop().run_in_executor(
