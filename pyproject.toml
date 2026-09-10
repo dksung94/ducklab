@@ -1,0 +1,29 @@
+[project]
+name = "ducklab"
+version = "0.0.1"
+description = "Watch your AI do research: .py files rendered as live notebook cells"
+requires-python = ">=3.10"
+dependencies = [
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.29",
+    "jupyter-client>=8.6",
+    "ipykernel>=6.29",
+    "watchfiles>=0.21",
+]
+
+[project.scripts]
+ducklab = "ducklab.server:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/ducklab"]
+
+[dependency-groups]
+dev = [
+    "httpx2>=2.12.0",
+    "matplotlib>=3.10.9",
+    "numpy>=2.2.6",
+]

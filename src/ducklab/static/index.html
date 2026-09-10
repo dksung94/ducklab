@@ -1,0 +1,116 @@
+<!doctype html><html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ducklab</title>
+<style>
+:root{--bg:#f6f5f1;--card:#ffffff;--ink:#1c1e21;--muted:#6a6f76;--rule:#e3e0d8;
+ --accent:#3a5a46;--accent-ink:#fff;--err:#a6392f;--busy:#8a641c;--code:#f0eee8}
+@media (prefers-color-scheme:dark){:root{--bg:#101211;--card:#181b19;--ink:#e8eae6;--muted:#8b918b;
+ --rule:#262a27;--accent:#7fae8f;--accent-ink:#10130f;--err:#e0857d;--busy:#d9b45c;--code:#141614}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:ui-sans-serif,-apple-system,"Segoe UI",Roboto,sans-serif;font-size:15px;line-height:1.55}
+.top{position:sticky;top:0;z-index:5;display:flex;align-items:center;gap:10px;padding:10px 14px;
+ background:var(--bg);border-bottom:1px solid var(--rule)}
+.top .name{font-family:ui-monospace,Menlo,monospace;font-weight:700;font-size:14px;flex:1;
+ overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dot{width:9px;height:9px;border-radius:50%;background:#b33;flex:none}
+.dot.on{background:var(--accent)}
+button{font:inherit;font-size:13px;border:1px solid var(--rule);background:var(--card);color:var(--ink);
+ border-radius:8px;padding:6px 12px;cursor:pointer}
+button.primary{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
+button:active{transform:translateY(1px)}
+.wrap{max-width:880px;margin:0 auto;padding:14px 12px 90px}
+.cell{background:var(--card);border:1px solid var(--rule);border-radius:12px;margin:12px 0;overflow:hidden}
+.cell.busy{border-color:var(--busy)}
+.chead{display:flex;align-items:center;gap:8px;padding:7px 12px;border-bottom:1px solid var(--rule)}
+.chead .t{font-size:12px;color:var(--muted);flex:1;font-family:ui-monospace,Menlo,monospace;
+ overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.chead button{padding:3px 10px;font-size:12px}
+pre.code{margin:0;padding:12px 14px;background:var(--code);font-family:ui-monospace,"SF Mono",Menlo,monospace;
+ font-size:12.5px;line-height:1.5;overflow-x:auto;white-space:pre;-webkit-overflow-scrolling:touch}
+.out{padding:6px 14px 10px;display:none}
+.out.has{display:block}
+.out pre{margin:6px 0;font-family:ui-monospace,Menlo,monospace;font-size:12px;line-height:1.45;
+ white-space:pre-wrap;word-break:break-word;overflow-x:auto}
+.out pre.err{color:var(--err)}
+.out img{max-width:100%;border-radius:6px;margin:6px 0;display:block}
+.spin{font-size:11px;color:var(--busy);padding:0 12px 8px;display:none}
+.cell.busy .spin{display:block}
+@media(max-width:600px){body{font-size:14px}.wrap{padding:10px 8px 80px}pre.code{font-size:11.5px}}
+</style></head><body>
+<div class="top">
+  <div class="dot" id="dot"></div>
+  <div class="name" id="fname">ducklab</div>
+  <button id="runall" class="primary">Run All</button>
+  <button id="restart">Restart</button>
+</div>
+<div class="wrap" id="cells"></div>
+<script>
+let ws, outputs = {};   // cell id -> [out]
+const $cells = document.getElementById("cells");
+const $dot = document.getElementById("dot");
+
+function connect(){
+  ws = new WebSocket((location.protocol==="https:"?"wss://":"ws://")+location.host+"/ws");
+  ws.onopen = () => $dot.classList.add("on");
+  ws.onclose = () => { $dot.classList.remove("on"); setTimeout(connect, 1500); };
+  ws.onmessage = (ev) => handle(JSON.parse(ev.data));
+}
+function send(m){ if(ws && ws.readyState===1) ws.send(JSON.stringify(m)); }
+
+function handle(m){
+  if(m.type==="cells"){
+    document.getElementById("fname").textContent = m.file;
+    document.title = "ducklab · " + m.file;
+    const live = new Set(m.cells.map(c=>c.id));
+    for(const k of Object.keys(outputs)) if(!live.has(k)) delete outputs[k];
+    render(m.cells);
+  } else if(m.type==="output"){
+    (outputs[m.cell] = outputs[m.cell] || []).push(m.out);
+    paintOut(m.cell);
+  } else if(m.type==="clear"){
+    outputs[m.cell] = []; paintOut(m.cell);
+  } else if(m.type==="status"){
+    const el = document.getElementById("cell-"+m.cell);
+    if(el) el.classList.toggle("busy", m.state==="busy");
+  }
+}
+
+function render(cells){
+  $cells.innerHTML = "";
+  for(const c of cells){
+    const d = document.createElement("div");
+    d.className = "cell"; d.id = "cell-"+c.id;
+    d.innerHTML = `
+      <div class="chead"><span class="t">[${c.idx}] ${c.title||("L"+c.lineno)}</span>
+        <button data-run="${c.id}">Run</button></div>
+      <pre class="code"></pre>
+      <div class="spin">running…</div>
+      <div class="out" id="out-${c.id}"></div>`;
+    d.querySelector("pre.code").textContent = c.source;
+    d.querySelector("[data-run]").onclick = () => send({type:"run", cell:c.id});
+    $cells.appendChild(d);
+    paintOut(c.id);
+  }
+}
+
+function paintOut(id){
+  const box = document.getElementById("out-"+id);
+  if(!box) return;
+  const outs = outputs[id] || [];
+  box.classList.toggle("has", outs.length>0);
+  box.innerHTML = "";
+  let textBuf = null;
+  const flush = () => { if(textBuf){ const p=document.createElement("pre"); p.textContent=textBuf.join(""); box.appendChild(p); textBuf=null; } };
+  for(const o of outs){
+    if(o.kind==="stream"){ (textBuf = textBuf || []).push(o.data); continue; }
+    flush();
+    if(o.kind==="image"){ const img=document.createElement("img"); img.src="data:image/png;base64,"+o.data; box.appendChild(img); }
+    else { const p=document.createElement("pre"); if(o.kind==="error") p.className="err"; p.textContent=o.data; box.appendChild(p); }
+  }
+  flush();
+}
+
+document.getElementById("runall").onclick = () => send({type:"run_all"});
+document.getElementById("restart").onclick = () => { if(confirm("Restart kernel? All state is lost.")) send({type:"restart"}); };
+connect();
+</script></body></html>
