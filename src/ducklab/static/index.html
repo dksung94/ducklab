@@ -62,6 +62,9 @@ kbd{font:11.5px ui-monospace,Menlo,monospace;background:var(--code);border:1px s
 .chead .t .ln{color:var(--faint,#999);font-weight:400}
 .chead button{padding:3px 11px;font-size:12px;opacity:.85}
 .chead button:hover{opacity:1}
+.chead .saved{font-size:11px;color:var(--accent);opacity:0;transition:opacity .15s;flex:none;
+ font-weight:600;pointer-events:none}
+.chead .saved.on{opacity:1}
 pre.code{margin:0;padding:12px 14px;background:var(--code);font-family:ui-monospace,"SF Mono",Menlo,monospace;
  font-size:12.5px;line-height:1.5;overflow-x:auto;white-space:pre;-webkit-overflow-scrolling:touch}
 .out{padding:8px 14px 12px;display:none;border-top:1px dashed var(--rule)}
@@ -205,6 +208,7 @@ let prevIds = null;      // cell ids from the previous render (null = first)
 let cellOrder = [];      // cell ids in document order
 let cellData = {};       // id -> cell
 let selId = null;        // command-mode selected cell
+let savedSrc = null;     // source just saved (to locate the cell after re-render)
 const $cells = document.getElementById("cells");
 const $dot = document.getElementById("dot");
 
@@ -236,6 +240,12 @@ function handle(m){
     if(prevIds && fresh.length && Object.keys(editors).length===0) selId = fresh[fresh.length-1].id;
     if(!cellOrder.includes(selId)) selId = cellOrder[0] || null;
     applySel();
+    if(savedSrc!==null){
+      const hit=m.cells.find(c=>c.source===savedSrc);
+      if(hit){ const chip=document.querySelector("#cell-"+hit.id+" .saved");
+        if(chip){ chip.classList.add("on"); setTimeout(()=>chip.classList.remove("on"),1400); } }
+      savedSrc=null;
+    }
     prevIds = live;
   } else if(m.type==="output"){
     (outputs[m.cell] = outputs[m.cell] || []).push(m.out);
@@ -292,6 +302,7 @@ function render(cells){
     d.className = "cell"; d.id = "cell-"+c.id;
     d.innerHTML = `
       <div class="chead"><span class="idx">${c.idx}</span><span class="t">${c.title||('<span class="ln">L'+c.lineno+"</span>")}</span>
+        <span class="saved">✓ 저장됨</span>
         <button data-ask="${c.id}" title="이 셀에 대해 AI에게 지시">AI</button>
         <button data-edit="${c.id}">Edit</button>
         <button data-run="${c.id}">Run</button></div>
@@ -476,6 +487,8 @@ function saveEditor(id, run){
   if(ti && ti.style.display!=="none") msg.title = ti.value.trim();
   send(msg);
   closeEditor(id);
+  savedSrc = msg.source;
+  showToast(run ? "✓ 저장 후 실행" : "✓ 저장됨");
 }
 
 // ---- per-cell ask-the-AI ----
