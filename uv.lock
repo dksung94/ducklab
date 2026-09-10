@@ -405,6 +405,7 @@ dependencies = [
     { name = "fastapi" },
     { name = "ipykernel" },
     { name = "jupyter-client" },
+    { name = "ptyprocess" },
     { name = "uvicorn", extra = ["standard"] },
     { name = "watchfiles" },
 ]
@@ -424,6 +425,7 @@ requires-dist = [
     { name = "fastapi", specifier = ">=0.110" },
     { name = "ipykernel", specifier = ">=6.29" },
     { name = "jupyter-client", specifier = ">=8.6" },
+    { name = "ptyprocess", specifier = ">=0.7.0" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.29" },
     { name = "watchfiles", specifier = ">=0.21" },
 ]

@@ -1,6 +1,7 @@
 <!doctype html><html lang="en"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>ducklab</title>
+<link rel="stylesheet" href="/static/vendor/xterm.css">
 <style>
 :root{--bg:#f6f5f1;--card:#ffffff;--ink:#1c1e21;--muted:#6a6f76;--rule:#e3e0d8;
  --accent:#3a5a46;--accent-ink:#fff;--err:#a6392f;--busy:#8a641c;--code:#f0eee8}
@@ -36,12 +37,20 @@ pre.code{margin:0;padding:12px 14px;background:var(--code);font-family:ui-monosp
 .spin{font-size:11px;color:var(--busy);padding:0 12px 8px;display:none}
 .cell.busy .spin{display:block}
 @media(max-width:600px){body{font-size:14px}.wrap{padding:10px 8px 80px}pre.code{font-size:11.5px}}
+#termwrap{position:fixed;left:0;right:0;bottom:0;z-index:9;background:#111;border-top:2px solid var(--rule);
+ height:42vh;display:none;flex-direction:column}
+#termwrap.open{display:flex}
+#termbar{display:flex;align-items:center;gap:8px;padding:4px 10px;background:#181818;color:#aaa;font-size:12px}
+#termbar .sp{flex:1}
+#term{flex:1;min-height:0;padding:2px 4px}
+body.termopen .wrap{padding-bottom:calc(42vh + 60px)}
 </style></head><body>
 <div class="top">
   <div class="dot" id="dot"></div>
   <div class="name" id="fname">ducklab</div>
   <button id="runall" class="primary">Run All</button>
   <button id="restart">Restart</button>
+  <button id="termtoggle">Terminal</button>
 </div>
 <div class="wrap" id="cells"></div>
 <script>
@@ -113,4 +122,31 @@ function paintOut(id){
 document.getElementById("runall").onclick = () => send({type:"run_all"});
 document.getElementById("restart").onclick = () => { if(confirm("Restart kernel? All state is lost.")) send({type:"restart"}); };
 connect();
-</script></body></html>
+
+// ---- terminal (xterm + pty over ws) ----
+let term=null, tws=null, fit=null;
+const termwrap=document.createElement("div"); termwrap.id="termwrap";
+termwrap.innerHTML='<div id="termbar"><span>terminal</span><span class="sp"></span><button id="termclose">×</button></div><div id="term"></div>';
+document.body.appendChild(termwrap);
+function openTerm(){
+  termwrap.classList.add("open"); document.body.classList.add("termopen");
+  if(term){ fit.fit(); term.focus(); return; }
+  term=new Terminal({fontSize:13,fontFamily:"Menlo,monospace",theme:{background:"#111"}});
+  fit=new FitAddon.FitAddon(); term.loadAddon(fit);
+  term.open(document.getElementById("term")); fit.fit();
+  tws=new WebSocket((location.protocol==="https:"?"wss://":"ws://")+location.host+"/ws/term");
+  tws.onmessage=(e)=>term.write(e.data);
+  tws.onopen=()=>tws.send(JSON.stringify({type:"resize",cols:term.cols,rows:term.rows}));
+  tws.onclose=()=>term.write("\r\n[disconnected]\r\n");
+  term.onData(d=>{ if(tws.readyState===1) tws.send(JSON.stringify({type:"in",data:d})); });
+  term.onResize(({cols,rows})=>{ if(tws.readyState===1) tws.send(JSON.stringify({type:"resize",cols,rows})); });
+  window.addEventListener("resize",()=>{ if(termwrap.classList.contains("open")) fit.fit(); });
+  term.focus();
+}
+function closeTerm(){ termwrap.classList.remove("open"); document.body.classList.remove("termopen"); }
+document.getElementById("termtoggle").onclick=()=>termwrap.classList.contains("open")?closeTerm():openTerm();
+termwrap.addEventListener("click",(e)=>{ if(e.target.id==="termclose") closeTerm(); });
+</script>
+<script src="/static/vendor/xterm.js"></script>
+<script src="/static/vendor/xterm-fit.js"></script>
+</body></html>

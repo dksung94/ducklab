@@ -9,6 +9,7 @@ dependencies = [
     "jupyter-client>=8.6",
     "ipykernel>=6.29",
     "watchfiles>=0.21",
+    "ptyprocess>=0.7.0",
 ]
 
 [project.scripts]

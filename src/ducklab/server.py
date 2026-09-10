@@ -12,12 +12,16 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import os
+import threading
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import uvicorn
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
+from fastapi.staticfiles import StaticFiles
+from ptyprocess import PtyProcessUnicode
 from watchfiles import awatch
 
 from .cells import parse_cells
@@ -95,6 +99,7 @@ class Session:
 def create_app(file: Path) -> FastAPI:
     app = FastAPI()
     session = Session(file)
+    app.mount("/static", StaticFiles(directory=STATIC), name="static")
 
     @app.on_event("startup")
     async def _startup():
@@ -136,6 +141,40 @@ def create_app(file: Path) -> FastAPI:
                     await session.send_all({"type": "status", "state": "restarted"})
         except WebSocketDisconnect:
             session.clients.discard(ws)
+
+    @app.websocket("/ws/term")
+    async def term_endpoint(ws: WebSocket):
+        """A real shell over a pty, one per connection. This is arbitrary code
+        execution — never expose beyond localhost/tailnet (docs 0001 §5.7)."""
+        await ws.accept()
+        loop = asyncio.get_running_loop()
+        shell = os.environ.get("SHELL", "/bin/bash")
+        pty = PtyProcessUnicode.spawn(
+            [shell, "-l"], dimensions=(24, 80), cwd=str(session.file.parent))
+
+        def reader():
+            while True:
+                try:
+                    data = pty.read(65536)
+                except Exception:
+                    break
+                asyncio.run_coroutine_threadsafe(ws.send_text(data), loop)
+        threading.Thread(target=reader, daemon=True).start()
+
+        try:
+            while True:
+                msg = json.loads(await ws.receive_text())
+                if msg["type"] == "in":
+                    pty.write(msg["data"])
+                elif msg["type"] == "resize":
+                    pty.setwinsize(msg["rows"], msg["cols"])
+        except WebSocketDisconnect:
+            pass
+        finally:
+            try:
+                pty.terminate(force=True)
+            except Exception:
+                pass
 
     return app
 
