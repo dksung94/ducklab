@@ -91,6 +91,22 @@ class Session:
         live = {c.id for c in self.cells}
         self.outputs = {k: v for k, v in self.outputs.items() if k in live}
 
+    def find_cell(self, ref: str):
+        for c in self.cells:
+            if c.id == ref or str(c.idx) == ref:
+                return c
+        return None
+
+    def outputs_view(self, cell_id: str) -> list[dict]:
+        """Outputs with image payloads elided — agents read text, not base64."""
+        out = []
+        for o in self.outputs.get(cell_id, []):
+            if o["kind"] == "image":
+                out.append({"kind": "image", "data": f"<png rendered in browser, {len(o['data'])} b64 chars>"})
+            else:
+                out.append(o)
+        return out
+
     def cells_msg(self) -> dict:
         return {"type": "cells", "file": self.file.name,
                 "cells": [{"id": c.id, "idx": c.idx, "title": c.title,
@@ -100,13 +116,20 @@ class Session:
 def default_term_cmd(file: Path, host: str, port: int) -> str:
     """Launch the pairing AI with context: which file this session serves and
     what its role is, so the agent doesn't start blind."""
+    base = f"http://{host}:{port}"
     prompt = (
-        f"ducklab pairing session. The file {file} is being served as live "
-        f"notebook cells at http://{host}:{port} — every edit you make to it "
-        "re-renders in the browser instantly (cells are split by '# %%'). "
-        "You are the researcher pairing on this file: read it first, keep the "
-        "'# %%' cell structure when editing, and prefer small incremental "
-        "edits so the human can follow along live."
+        f"ducklab pairing session. The file {file} is served as live notebook "
+        f"cells at {base} — every edit you make to it re-renders in the browser "
+        "instantly (cells split by '# %%'). You are the researcher pairing on "
+        "this file: read it first, keep the '# %%' cell structure, prefer small "
+        "incremental edits the human can watch land. "
+        "To EXECUTE cells use the HTTP API (cells run on the file's own kernel; "
+        "state persists across runs): "
+        f"list: curl -s {base}/api/cells ; "
+        f"run one (blocks, returns outputs): curl -s -XPOST {base}/api/run/<idx> ; "
+        f"run all: curl -s -XPOST {base}/api/run_all ; "
+        f"read last outputs: curl -s {base}/api/outputs/<idx> . "
+        "Images render in the browser and appear elided in the API."
     )
     return f"claude {shlex.quote(prompt)}"
 
@@ -175,6 +198,40 @@ def create_app(file: Path, term_cmd: str | None = "claude") -> FastAPI:
                     await session.send_all({"type": "status", "state": "restarted"})
         except WebSocketDisconnect:
             session.clients.discard(ws)
+
+    # ---- agent API: list cells, run, read outputs (curl-able) ------------
+    @app.get("/api/cells")
+    async def api_cells():
+        return [{"idx": c.idx, "id": c.id, "title": c.title, "lineno": c.lineno,
+                 "has_output": bool(session.outputs.get(c.id))} for c in session.cells]
+
+    @app.post("/api/run/{ref}")
+    async def api_run(ref: str, wait: bool = True):
+        cell = session.find_cell(ref)
+        if cell is None:
+            return {"ok": False, "error": f"no cell {ref!r}; see /api/cells"}
+        fut = session.executor.submit(session.run_cell_blocking, cell.id)
+        if wait:
+            await asyncio.wrap_future(fut)
+            return {"ok": True, "cell": cell.idx, "outputs": session.outputs_view(cell.id)}
+        return {"ok": True, "cell": cell.idx, "queued": True}
+
+    @app.post("/api/run_all")
+    async def api_run_all(wait: bool = True):
+        futs = [(c, session.executor.submit(session.run_cell_blocking, c.id))
+                for c in session.cells]
+        if wait:
+            for _, fut in futs:
+                await asyncio.wrap_future(fut)
+            return {"ok": True, "outputs": {c.idx: session.outputs_view(c.id) for c, _ in futs}}
+        return {"ok": True, "queued": len(futs)}
+
+    @app.get("/api/outputs/{ref}")
+    async def api_outputs(ref: str):
+        cell = session.find_cell(ref)
+        if cell is None:
+            return {"ok": False, "error": f"no cell {ref!r}; see /api/cells"}
+        return {"ok": True, "cell": cell.idx, "outputs": session.outputs_view(cell.id)}
 
     @app.websocket("/ws/term")
     async def term_endpoint(ws: WebSocket):
