@@ -10,30 +10,30 @@ uv run ducklab ~/my/research        # a directory, or a single .py file
 ```
 
 No `.ipynb`. No cloud. One kernel per file. Claude Code (or any CLI agent) is a
-first-class pair partner.
+first-class pair partner, side by side with the notebook.
 
 ---
 
-### The loop
+### Pair, side by side
 
-Run cells, see outputs inline — and when the pairing agent edits the file, the new
-cell scrolls into view on its own:
+Dock the terminal beside the cells: the agent edits the file on the right, and the
+new cell lands and scrolls into view on the left — no refresh, no babysitting.
 
-![run cells and watch the AI's edit land live](docs/media/demo-pair.gif)
+![pairing side by side — the AI edits, cells update live](docs/media/demo-pair.gif)
 
 ### Point at a cell, tell the AI
 
-Every cell has an **AI** button: type one line, and it lands in the agent's terminal
-*with the cell context attached* — no re-describing what you're looking at:
+Every cell has an **AI** button: type one line and it lands in the agent's terminal
+*with the cell's index and title attached* — no re-describing what you're looking at.
 
 ![ask the AI about a specific cell](docs/media/demo-ask.gif)
 
-### A workspace, not a file
+### Run and watch
 
-Browse every `.py` in the project; each opened file gets its **own kernel** (badge =
-alive), inspectable and stoppable from the same drawer:
+Run All fills a progress bar and follows the running cell; each cell gets a status
+stripe (green ok · red error), an elapsed badge, and live kernel-memory in the bar.
 
-![workspace drawer with per-file kernels](docs/media/demo-files.gif)
+![run all with progress, status stripes and timings](docs/media/demo-run.gif)
 
 ---
 
@@ -43,7 +43,7 @@ alive), inspectable and stoppable from the same drawer:
 |---|---|---|---|---|
 | Source format | `.ipynb` JSON | `.py` | proprietary | **plain `.py` + `# %%`** |
 | AI edits the file → UI updates | — | partial | n/a | **yes, live** |
-| Your agent (Claude Code, codex, …) | bolt-on | — | their AI only | **built in, auto-started with context** |
+| Your agent (Claude Code, codex, …) | bolt-on | — | their AI only | **built in, side by side, context-fed** |
 | Data stays local | yes | yes | no | **yes** |
 | Isolation | kernel per notebook | — | — | **kernel per file** |
 
@@ -53,35 +53,44 @@ notebook."*
 
 ## Features
 
+**Notebook**
 - **Live cells from plain `.py`** — `# %%` percent format (jupytext/VS Code
-  compatible). Edits on disk re-render instantly; unchanged cells keep their outputs
+  compatible). Disk edits re-render instantly; unchanged cells keep their outputs
   (content-hash identity).
-- **One kernel per file** — file = one analysis = one namespace. Kernels are lazy,
-  listed with pid/memory/last-run, restartable and stoppable per file.
+- **In-browser editing** — CodeMirror per cell, editable **title** and source;
+  `⌘/Ctrl+S` saves, `⌘/Ctrl+Enter` runs. Saves rewrite only that cell's span, so a
+  browser edit and an agent's file edit are the same path — *the file is the truth*.
+- **Full cell ops** — run, insert above/below, duplicate, move up/down, clear
+  output, delete — from a per-cell **⋯** menu, the bottom **+ Add cell**, or the
+  keyboard. **Undo** (`⌘/Ctrl+Z` or the toast) brings back a deleted cell or cleared
+  output.
+- **Jupyter-style shortcuts** — `j/k` select, `Enter` edit, `Shift+Enter` run &
+  advance, `a/b` insert, `dd` delete; `?` shows the full list.
+- **Run feedback** — per-cell status stripe (ok/error) and **elapsed** badge, an
+  **edited** badge when a cell changed since its last run, Run-All progress bar, live
+  **kernel memory** in the top bar.
+
+**Agent pairing**
 - **Agent built in** — the embedded terminal auto-starts your agent (`claude` by
-  default) with a context prompt: which file, how the live loop works, and an HTTP
-  API to run cells and read outputs (`/api/cells`, `/api/run/{idx}`,
-  `/api/outputs/{idx}`). Prompts are configurable per directory *and per file*.
-- **Per-cell AI ask** — one-line instruction, injected into the agent's terminal
-  with `cell [idx] "title"` context.
+  default) with a context prompt: which file, the live-render loop, and an HTTP API
+  to run cells and read outputs. Persistent like a kernel — a **refresh detaches, it
+  doesn't kill** the session; it ends only on explicit close.
+- **Per-cell AI ask** — one-line instruction injected into the terminal with the
+  cell context.
 - **Prompt presets** — reusable context snippets as `.ducklab/prompts/*.md`
-  (workspace or global `~/.ducklab/prompts/`); import any subset into a file's
-  context (e.g. a mid-frequency toolkit + an HFT-features preset), composed on
-  top of the base prompt. Selectable per directory or per file.
-- **In-browser editing** — CodeMirror per cell (⌘/Ctrl+Enter = save & run); saves
-  rewrite only that cell's span on disk, markers preserved, so browser edits and
-  agent edits are the same code path: *the file is the truth*.
+  (workspace or global), imported per directory or per file, editable in Settings.
+
+**Workspace & environments**
+- **Workspace browser** — every `.py` in the tree, new-file creation, per-file
+  **kernel** badges (pid · memory · restart/stop) and **terminal** list.
 - **Per-file Python env** — pick the interpreter from a picker (auto-discovered
-  `.venv`s + manual paths); kernels launch on that venv's own interpreter via an
-  explicit KernelSpec, and ipykernel is provisioned with `uv` if the venv lacks
-  it — no preinstall, no kernelspec registration.
-- **Real terminal** — xterm + pty, resizable, dockable bottom or **side-by-side**.
-  Persistent like a kernel: a **refresh detaches, it doesn't kill** — the pty (and
-  the agent session in it) lives on the server, replays its tail on reconnect, and
-  ends only on explicit close. Listed with the kernels in the drawer.
-- **Workspace browser** — every `.py` in the tree, new-file creation, kernel badges.
-- **Syntax highlight** (Dracula in dark), dark/light theme, mobile-friendly
-  observation layout.
+  `.venv`s + manual paths); the kernel launches on that venv's own interpreter via an
+  explicit KernelSpec, and `uv` provisions ipykernel if the venv lacks it — no
+  preinstall, no kernelspec registration.
+
+**Everywhere**
+- Syntax highlight (Dracula in dark), dark/light theme, resizable terminal dockable
+  **side-by-side** or bottom, mobile-friendly layout.
 
 ## Install & run
 
@@ -92,8 +101,8 @@ uv run ducklab <file-or-dir>          # default: configured workspace, else cwd
 ```
 
 Options: `--port`, `--host`, `--term-cmd "codex"` (or `""` for a plain shell).
-Settings (⚙): default workspace, agent command, context prompt — directory-level
-defaults with optional per-file overrides, stored in `.ducklab.json`.
+Settings (⚙): default workspace, agent command, context prompt & presets (directory
+defaults with optional per-file overrides), stored in `.ducklab.json`.
 
 ## Agent API
 
@@ -118,17 +127,14 @@ keep an app-level auth in front, and read
 [`docs/0001-requirements.md` §5.7](docs/0001-requirements.md) before exposing
 anything.
 
-## Status & roadmap
+## Roadmap
 
-Working today: everything above (M0–M2 of the
-[requirements](docs/0001-requirements.md)). Next:
-
-- PEP 723 inline-deps auto-resolution (the manual picker exists today)
-- output persistence across server restarts
-- kernel idle timeout (manual stop exists)
+Working today: everything above. Next: PEP 723 inline-deps auto-resolution (the
+manual env picker exists today), output persistence across server restarts, kernel
+idle timeout.
 
 ---
 
 *Sibling of [duckclip](https://github.com/dksung94/duckclip). Built pair-style with
-Claude Code — including most of this repo's commits, and the bar-chart cell an agent
+Claude Code — including most of this repo's commits, and a bar-chart cell an agent
 added to the demo while we were dogfooding.*
