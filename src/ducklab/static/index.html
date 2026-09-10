@@ -210,11 +210,11 @@ body.termopen-right{padding-right:var(--termw,40vw)}
   <div class="name" id="fname">ducklab</div>
   <button id="runall" class="primary">Run All</button>
   <button id="restart">Restart</button>
-  <button id="clearall" title="모든 셀 출력 지우기">출력 지우기</button>
+  <button id="clearall" title="Clear all outputs">Clear outputs</button>
   <span id="memchip"></span>
   <button id="envchip" title="python environment">env</button>
   <button id="termtoggle">Terminal</button>
-  <button id="helpbtn" title="단축키 (?)">?</button>
+  <button id="helpbtn" title="Shortcuts (?)">?</button>
   <button id="settingsbtn" title="settings">⚙</button>
 </div>
 <div id="runbar"></div>
@@ -342,29 +342,29 @@ function render(cells){
     d.className = "cell"; d.id = "cell-"+c.id;
     d.innerHTML = `
       <div class="chead"><span class="idx">${c.idx}</span><span class="runbadge"></span><span class="t">${c.title||('<span class="ln">L'+c.lineno+"</span>")}</span>
-        <span class="saved">✓ 저장됨</span>
-        <button data-ask="${c.id}" title="이 셀에 대해 AI에게 지시">AI</button>
+        <span class="saved">✓ saved</span>
+        <button data-ask="${c.id}" title="Ask the AI about this cell">AI</button>
         <button data-edit="${c.id}">Edit</button>
         <button data-run="${c.id}">Run</button>
-        <button data-menu="${c.id}" title="더보기">⋯</button></div>
+        <button data-menu="${c.id}" title="More">⋯</button></div>
       <div class="cellmenu">
-        <button data-op="insert-above">↑ 위에 삽입</button>
-        <button data-op="insert-below">↓ 아래에 삽입</button>
-        <button data-op="duplicate">⧉ 복제</button>
+        <button data-op="insert-above">↑ Insert above</button>
+        <button data-op="insert-below">↓ Insert below</button>
+        <button data-op="duplicate">⧉ Duplicate</button>
         <div class="sep"></div>
-        <button data-op="up">▲ 위로 이동</button>
-        <button data-op="down">▼ 아래로 이동</button>
+        <button data-op="up">▲ Move up</button>
+        <button data-op="down">▼ Move down</button>
         <div class="sep"></div>
-        <button data-op="clear">⌫ 출력 지우기</button>
-        <button data-op="delete" class="danger">🗑 삭제</button>
+        <button data-op="clear">⌫ Clear output</button>
+        <button data-op="delete" class="danger">🗑 Delete</button>
       </div>
       <pre class="code"></pre>
       <div class="askbar">
-        <input type="text" placeholder="이 셀에 대해 AI에게… (Enter = 터미널로 전달, Esc = 닫기)">
+        <input type="text" placeholder="Ask the AI about this cell… (Enter = send to terminal, Esc = close)">
         <span class="hint">→ terminal</span>
-        <button data-asksend="${c.id}" class="primary">보내기</button>
+        <button data-asksend="${c.id}" class="primary">Send</button>
       </div>
-      <input class="celltitle" placeholder="# %% 셀 제목 (선택)">
+      <input class="celltitle" placeholder="# %% cell title (optional)">
       <div class="cm-holder"></div>
       <div class="editbar">
         <button data-save="${c.id}" class="primary">Save</button>
@@ -373,8 +373,8 @@ function render(cells){
         <span style="flex:1"></span><span style="font-size:11px;color:var(--muted)">⌘/Ctrl+Enter = Save &amp; Run</span>
       </div>
       <div class="spin">running… <span class="elapsed"></span>
-        <button class="stopbtn" data-stop="${c.id}" title="커널에 SIGINT — 실행 중인 셀이 KeyboardInterrupt로 멈춥니다">■ stop</button></div>
-      <div class="qspin">queued… (앞 셀 실행이 끝나면 시작)</div>
+        <button class="stopbtn" data-stop="${c.id}" title="SIGINT the kernel — the running cell stops with KeyboardInterrupt">■ stop</button></div>
+      <div class="qspin">queued… (starts when the cell ahead finishes)</div>
       <div class="out" id="out-${c.id}"></div>`;
     const pc = d.querySelector("pre.code"); pc.dataset.src = c.source; paintCode(pc, c.source);
     d.querySelector("[data-run]").onclick = () => send({type:"run", cell:c.id});
@@ -402,7 +402,7 @@ function render(cells){
     paintOut(c.id);
   }
   const add=document.createElement("div"); add.id="addcell";
-  add.innerHTML='<button title="맨 아래에 셀 추가 (b)"><span class="plus">+</span> 셀 추가</button>';
+  add.innerHTML='<button title="Add a cell at the end (b)"><span class="plus">+</span> Add cell</button>';
   add.querySelector("button").onclick=()=>send({type:"insert",cell:"",where:"below"});
   $cells.appendChild(add);
   applySel();
@@ -430,7 +430,7 @@ document.addEventListener("keydown",(e)=>{
   if((e.metaKey||e.ctrlKey) && (e.key==="s"||e.key==="S")){
     e.preventDefault();
     const ids=Object.keys(editors);
-    if(ids.length){ ids.forEach(id=>saveEditor(id,false)); showToast("셀 저장됨"); }
+    if(ids.length){ ids.forEach(id=>saveEditor(id,false)); showToast("Cell saved"); }
   }
   if((e.metaKey||e.ctrlKey) && (e.key==="z"||e.key==="Z") && !Object.keys(editors).length){
     e.preventDefault(); send({type:"undo"});
@@ -481,27 +481,27 @@ document.addEventListener("keydown",(e)=>{
   else if(e.key==="a"){ e.preventDefault(); send({type:"insert",cell:selId,where:"above"}); }
   else if(e.key==="b"){ e.preventDefault(); send({type:"insert",cell:selId,where:"below"}); }
   else if(e.key==="d"){ const now=Date.now(); if(now-lastD<500){ lastD=0;
-      if(cellData[selId] && confirm(`셀 [${cellData[selId].idx}] 삭제?`)) send({type:"delete",cell:selId}); }
+      if(cellData[selId] && confirm(`Delete cell [${cellData[selId].idx}]?`)) send({type:"delete",cell:selId}); }
       else lastD=now; }
   else if(e.key==="i"){ /* reserved */ }
 });
 
 // ---- shortcuts help overlay ----
 const help=document.createElement("div"); help.id="help";
-help.innerHTML=`<div class="card"><h3>키보드 단축키</h3><table>
-  <tr><td class="grp" colspan=2>명령 모드 (셀 선택 상태 · 편집 아님)</td></tr>
-  <tr><td><kbd>j</kbd> / <kbd>↓</kbd>, <kbd>k</kbd> / <kbd>↑</kbd></td><td>다음/이전 셀 선택</td></tr>
-  <tr><td><kbd>Enter</kbd></td><td>선택 셀 편집</td></tr>
-  <tr><td><kbd>Shift</kbd>+<kbd>Enter</kbd></td><td>실행 후 다음 셀 선택</td></tr>
-  <tr><td><kbd>⌘</kbd>/<kbd>Ctrl</kbd>+<kbd>Enter</kbd></td><td>제자리 실행</td></tr>
-  <tr><td><kbd>a</kbd> / <kbd>b</kbd></td><td>위/아래에 셀 삽입</td></tr>
-  <tr><td><kbd>d</kbd> <kbd>d</kbd></td><td>셀 삭제 (연속 2번)</td></tr>
-  <tr><td class="grp" colspan=2>편집 모드 (셀 안에서 타이핑)</td></tr>
-  <tr><td><kbd>⌘</kbd>/<kbd>Ctrl</kbd>+<kbd>Enter</kbd></td><td>저장 후 실행</td></tr>
-  <tr><td><kbd>Shift</kbd>+<kbd>Enter</kbd></td><td>저장·실행 후 다음 셀</td></tr>
-  <tr><td><kbd>Esc</kbd></td><td>편집 종료 → 명령 모드</td></tr>
-  <tr><td class="grp" colspan=2>어디서나</td></tr>
-  <tr><td><kbd>?</kbd></td><td>이 도움말</td></tr>
+help.innerHTML=`<div class="card"><h3>Keyboard shortcuts</h3><table>
+  <tr><td class="grp" colspan=2>Command mode (cell selected, not editing)</td></tr>
+  <tr><td><kbd>j</kbd> / <kbd>↓</kbd>, <kbd>k</kbd> / <kbd>↑</kbd></td><td>Select next / previous cell</td></tr>
+  <tr><td><kbd>Enter</kbd></td><td>Edit selected cell</td></tr>
+  <tr><td><kbd>Shift</kbd>+<kbd>Enter</kbd></td><td>Run and select next</td></tr>
+  <tr><td><kbd>⌘</kbd>/<kbd>Ctrl</kbd>+<kbd>Enter</kbd></td><td>Run in place</td></tr>
+  <tr><td><kbd>a</kbd> / <kbd>b</kbd></td><td>Insert cell above / below</td></tr>
+  <tr><td><kbd>d</kbd> <kbd>d</kbd></td><td>Delete cell (press twice)</td></tr>
+  <tr><td class="grp" colspan=2>Edit mode (typing in a cell)</td></tr>
+  <tr><td><kbd>⌘</kbd>/<kbd>Ctrl</kbd>+<kbd>Enter</kbd></td><td>Save and run</td></tr>
+  <tr><td><kbd>Shift</kbd>+<kbd>Enter</kbd></td><td>Save, run, select next</td></tr>
+  <tr><td><kbd>Esc</kbd></td><td>Exit edit → command mode</td></tr>
+  <tr><td class="grp" colspan=2>Anywhere</td></tr>
+  <tr><td><kbd>?</kbd></td><td>This help</td></tr>
 </table></div>`;
 document.body.appendChild(help);
 help.addEventListener("click",(e)=>{ if(e.target===help) toggleHelp(false); });
@@ -516,21 +516,21 @@ function cellOp(op, c){
   else if(op==="up") send({type:"move",cell:c.id,delta:-1});
   else if(op==="down") send({type:"move",cell:c.id,delta:1});
   else if(op==="clear") send({type:"clear_output",cell:c.id});
-  else if(op==="delete"){ if(confirm(`셀 [${c.idx}] ${c.title||""} 삭제?`)){ send({type:"delete",cell:c.id});
-      showToast("셀 삭제됨","실행취소",()=>send({type:"undo"})); } }
+  else if(op==="delete"){ if(confirm(`Delete cell [${c.idx}] ${c.title||""}?`)){ send({type:"delete",cell:c.id});
+      showToast("Cell deleted","Undo",()=>send({type:"undo"})); } }
 }
 document.addEventListener("click",()=>document.querySelectorAll(".cellmenu.open").forEach(x=>x.classList.remove("open")));
 document.getElementById("runall").onclick = () => send({type:"run_all"});
 document.getElementById("restart").onclick = () => { if(confirm("Restart kernel? All state is lost.")) send({type:"restart"}); };
-document.getElementById("clearall").onclick = () => { send({type:"clear_all"}); showToast("출력 전체 지움","실행취소",()=>send({type:"undo"})); };
+document.getElementById("clearall").onclick = () => { send({type:"clear_all"}); showToast("All outputs cleared","Undo",()=>send({type:"undo"})); };
 async function pollMem(){
   try{
     const d=await (await fetch("/api/kernels")).json();
     const rel=FILE || document.getElementById("fname").textContent;
     const k=d.kernels.find(x=>x.file===rel);
     const chip=document.getElementById("memchip");
-    if(k && k.alive){ chip.textContent="🧠 "+(k.rss_mb??"?")+"MB"; chip.title="이 파일 커널 메모리 · pid "+k.pid; chip.classList.add("on"); }
-    else { chip.textContent="🧠 커널 없음"; chip.title="아직 실행 전 — 첫 실행 시 커널 시작"; chip.classList.add("on"); }
+    if(k && k.alive){ chip.textContent="🧠 "+(k.rss_mb??"?")+"MB"; chip.title="this file's kernel memory · pid "+k.pid; chip.classList.add("on"); }
+    else { chip.textContent="🧠 no kernel"; chip.title="not started yet — first run starts the kernel"; chip.classList.add("on"); }
   }catch(_){}
 }
 setInterval(()=>{ if(!document.hidden) pollMem(); }, 3000);
@@ -554,8 +554,8 @@ function openEditor(c){
     extraKeys: {"Cmd-Enter": () => saveEditor(c.id, true),
                 "Ctrl-Enter": () => saveEditor(c.id, true),
                 "Shift-Enter": () => { saveEditor(c.id, true); selectRel(1); },
-                "Cmd-S": () => { saveEditor(c.id, false); showToast("셀 저장됨"); },
-                "Ctrl-S": () => { saveEditor(c.id, false); showToast("셀 저장됨"); },
+                "Cmd-S": () => { saveEditor(c.id, false); showToast("Cell saved"); },
+                "Ctrl-S": () => { saveEditor(c.id, false); showToast("Cell saved"); },
                 "Esc": () => { closeEditor(c.id); const card=document.getElementById("cell-"+c.id); card&&card.focus&&card.focus(); }},
   });
   editors[c.id] = cm; cm.focus();
@@ -574,7 +574,7 @@ function saveEditor(id, run){
   send(msg);
   closeEditor(id);
   savedSrc = msg.source;
-  showToast(run ? "✓ 저장 후 실행" : "✓ 저장됨");
+  showToast(run ? "✓ Save and run" : "✓ saved");
 }
 
 // ---- per-cell ask-the-AI ----
@@ -598,11 +598,11 @@ function sendAsk(c){
   const inp=card.querySelector(".askbar input");
   const text=inp.value.trim(); if(!text) return;
   const label=c.title || ("L"+c.lineno);
-  const msg=`셀 [${c.idx}] "${label}" 에 대해: ${text}`;
-  const deliver=()=>{ termWrite(msg + "\r"); showToast("터미널의 AI에게 전달됨"); };
+  const msg=`On cell [${c.idx}] "${label}": ${text}`;
+  const deliver=()=>{ termWrite(msg + "\r"); showToast("Sent to the AI in the terminal"); };
   if(termWrite("")) { deliver(); }
-  else { // 터미널이 닫혀 있으면 열고, 에이전트가 뜰 시간을 준 뒤 전달
-    openTerm(); showToast("터미널 여는 중… 곧 전달됩니다");
+  else { // terminal closed: open it, then send once the agent has had time to start
+    openTerm(); showToast("Opening terminal… will send shortly");
     setTimeout(deliver, 5000);
   }
   inp.value=""; toggleAsk(c.id, false);
@@ -612,12 +612,12 @@ function sendAsk(c){
 const envmodal=document.createElement("div"); envmodal.id="envmodal";
 envmodal.innerHTML=`<div class="panel">
   <h3>Python environment <span style="font-weight:400;color:var(--muted)" id="env-forfile"></span></h3>
-  <p class="hint">이 파일의 커널이 쓸 인터프리터. 변경하면 커널이 내려가고 <b>다음 실행부터</b> 새 환경으로 뜹니다.
-     (uv가 있으면 ipykernel 미설치 venv도 바로 사용 가능)</p>
+  <p class="hint">The interpreter this file's kernel uses. Changing it stops the kernel and the <b>from the next run</b> next run starts on the new one.
+     (uv is present, a venv without ipykernel works too)</p>
   <div id="envlist"></div>
   <div class="addrow">
-    <input id="env-addpath" type="text" placeholder="환경 추가 — venv 디렉터리 또는 python 경로 (~/proj/.venv)">
-    <button id="env-add">추가</button>
+    <input id="env-addpath" type="text" placeholder="Add env — a venv dir or a python path (~/proj/.venv)">
+    <button id="env-add">Add</button>
   </div>
 </div>`;
 document.body.appendChild(envmodal);
@@ -646,7 +646,7 @@ async function openEnvModal(){
     const j=await res.json();
     if(!j.ok){ alert(j.error); return; }
     envmodal.classList.remove("open");
-    showToast("환경 변경됨 — 다음 실행부터 적용");
+    showToast("Environment changed — applies from the next run");
     refreshEnvChip();
   });
   envmodal.classList.add("open");
@@ -659,13 +659,13 @@ document.getElementById("env-add").onclick=async()=>{
   const j=await r.json();
   if(!j.ok){ alert(j.error); return; }
   document.getElementById("env-addpath").value="";
-  showToast("추가됨: "+j.version); openEnvModal();
+  showToast("Added: "+j.version); openEnvModal();
 };
 refreshEnvChip();
 
 // ---- files drawer ----
 const drawer=document.createElement("div"); drawer.id="drawer";
-drawer.innerHTML='<div class="dhead">workspace<br><b id="droot"></b><div style="margin-top:8px"><button id="newfile" style="font-size:12px;padding:4px 10px">＋ 새 파일</button></div></div><div class="dlist" id="dlist"></div><div class="khead">kernels</div><div id="klist"></div><div class="khead">terminals</div><div id="tlist" style="padding-bottom:10px"></div>';
+drawer.innerHTML='<div class="dhead">workspace<br><b id="droot"></b><div style="margin-top:8px"><button id="newfile" style="font-size:12px;padding:4px 10px">＋ New file</button></div></div><div class="dlist" id="dlist"></div><div class="khead">kernels</div><div id="klist"></div><div class="khead">terminals</div><div id="tlist" style="padding-bottom:10px"></div>';
 const scrim=document.createElement("div"); scrim.id="scrim";
 document.body.appendChild(scrim); document.body.appendChild(drawer);
 async function openDrawer(){
@@ -680,11 +680,11 @@ async function openDrawer(){
 async function paintTerminals(){
   const box=document.getElementById("tlist");
   const d=await (await fetch("/api/terminals")).json();
-  if(!d.terminals.length){ box.innerHTML='<div class="krow dead">열린 터미널 없음</div>'; return; }
+  if(!d.terminals.length){ box.innerHTML='<div class="krow dead">No open terminals</div>'; return; }
   box.innerHTML=d.terminals.map(t=>`<div class="krow">
     <div class="kf">${t.alive?'●':'○'} ${t.file}</div>
-    <div class="ki">pid ${t.pid} · 연결 ${t.clients} · 새로고침해도 유지</div>
-    <button data-tclose="${t.file}">종료</button></div>`).join("");
+    <div class="ki">pid ${t.pid} · clients ${t.clients} · survives refresh</div>
+    <button data-tclose="${t.file}">Kill</button></div>`).join("");
   box.querySelectorAll("[data-tclose]").forEach(b=>b.onclick=async()=>{
     await fetch("/api/terminals/close",{method:"POST",headers:{"Content-Type":"application/json"},
       body:JSON.stringify({file:b.dataset.tclose})});
@@ -697,12 +697,12 @@ function ago(ts){ if(!ts) return "—"; const s=Math.max(0,(Date.now()/1000-ts)|
 async function paintKernels(){
   const r=await fetch("/api/kernels"); const d=await r.json();
   const box=document.getElementById("klist");
-  if(!d.kernels.length){ box.innerHTML='<div class="krow dead">아직 연 파일 없음</div>'; return; }
+  if(!d.kernels.length){ box.innerHTML='<div class="krow dead">No files opened yet</div>'; return; }
   box.innerHTML=d.kernels.map(k=>`<div class="krow">
     <div class="kf">${k.alive?'●':'○'} ${k.file}</div>
     <div class="ki">${k.alive
       ? `pid ${k.pid??'?'} · ${k.rss_mb??'?'}MB · runs ${k.runs} · last ${ago(k.last_run_at)}`
-      : `kernel 없음 · runs ${k.runs} (다음 실행 시 새로 시작)`}</div>
+      : `kernel none · runs ${k.runs} (next run starts fresh)`}</div>
     ${k.alive?`<button data-krestart="${k.file}">Restart</button><button data-kstop="${k.file}">Stop</button>`:''}
   </div>`).join("");
   box.querySelectorAll("[data-kstop]").forEach(b=>b.onclick=async()=>{
@@ -717,7 +717,7 @@ function closeDrawer(){ drawer.classList.remove("open"); scrim.classList.remove(
 document.getElementById("filesbtn").onclick=openDrawer;
 drawer.addEventListener("click",async(e)=>{
   if(e.target.id!=="newfile") return;
-  const name=prompt("새 파일 경로 (workspace 기준, 예: analysis/momentum.py)");
+  const name=prompt("New file path (relative to workspace, e.g. analysis/momentum.py)");
   if(!name) return;
   const r=await fetch("/api/files/new",{method:"POST",headers:{"Content-Type":"application/json"},
     body:JSON.stringify({name})});
@@ -730,34 +730,34 @@ scrim.onclick=closeDrawer;
 // ---- settings modal ----
 const settings=document.createElement("div"); settings.id="settings";
 settings.innerHTML=`
-  <div class="phead"><h3>Settings</h3><button id="cfg-cancel">✕ 닫기</button></div>
+  <div class="phead"><h3>Settings</h3><button id="cfg-cancel">✕ Close</button></div>
   <div class="pbody"><div class="pin">
-    <p class="hint">터미널을 열 때 자동 실행되는 에이전트와, 그 에이전트에게 주입되는 컨텍스트 프롬프트.
-       저장은 파일 옆 <code>.ducklab.json</code> — <b>다음에 여는 터미널부터</b> 적용.</p>
-    <label>Default workspace <span class="sub">— 인자 없이 <code>ducklab</code> 실행 시 열 디렉터리 (다음 실행부터)</span></label>
+    <p class="hint">The agent auto-started when a terminal opens, and the context prompt injected into it.
+       Saved next to the file in <code>.ducklab.json</code> — <b>applies to the next terminal</b>.</p>
+    <label>Default workspace <span class="sub">— Directory opened when <code>ducklab</code> runs with no argument (from next launch)</span></label>
     <input type="text" id="cfg-workspace" placeholder="~/PycharmProjects/psi">
-    <label>적용 범위</label>
+    <label>Scope</label>
     <div style="display:flex;align-items:center">
       <div class="seg">
-        <button id="scope-dir" class="on">디렉터리 기본값</button>
-        <button id="scope-file">이 파일 전용</button>
+        <button id="scope-dir" class="on">Directory default</button>
+        <button id="scope-file">This file only</button>
       </div>
       <span class="scopenote" id="cfg-scopenote"></span>
     </div>
-    <label>Agent command <span class="sub">— claude · codex · 빈칸 = 셸만</span></label>
+    <label>Agent command <span class="sub">— claude · codex · empty = shell only</span></label>
     <input type="text" id="cfg-agent" placeholder="claude">
-    <label>Context prompt <span class="sub">— 플레이스홀더 {file} {url} {rel} · 빈칸 = 프롬프트 없이 실행</span></label>
+    <label>Context prompt <span class="sub">— placeholders {file} {url} {rel} · empty = launch with no prompt</span></label>
     <textarea id="cfg-prompt"></textarea>
-    <label>Prompt presets <span class="sub">— 위 프롬프트에 임포트(합성)됨 · 현재 <b id="cfg-scopeword">디렉터리</b> 범위</span></label>
+    <label>Prompt presets <span class="sub">— imported into the prompt above · current scope: <b id="cfg-scopeword">directory</b></span></label>
     <div class="presets" id="cfg-presets"></div>
     <div class="newpreset">
-      <input type="text" id="cfg-newpreset-name" placeholder="새 프리셋 이름 (a-z0-9-_)">
-      <button id="cfg-newpreset">현재 프롬프트로 프리셋 저장</button>
+      <input type="text" id="cfg-newpreset-name" placeholder="New preset name (a-z0-9-_)">
+      <button id="cfg-newpreset">Save current prompt as preset</button>
     </div>
   </div></div>
   <div class="pfoot"><div class="pin">
-    <button id="cfg-default">기본 프롬프트로</button>
-    <button id="cfg-remove-over" style="display:none">파일 오버라이드 제거</button>
+    <button id="cfg-default">Reset to default</button>
+    <button id="cfg-remove-over" style="display:none">Remove file override</button>
     <span class="sp" id="cfg-note"></span>
     <button id="cfg-save" class="primary">Save</button>
   </div></div>`;
@@ -767,15 +767,15 @@ let cfgDir={agent:"",prompt:""}, cfgFile=null, curScope="dir";
 let presetsAvail=[], selDir=[], selFile=null;   // selFile=null → inherits dir
 function curSel(){ return curScope==="file" ? (selFile||[]) : selDir; }
 function renderPresets(){
-  document.getElementById("cfg-scopeword").textContent = curScope==="file" ? "이 파일" : "디렉터리";
+  document.getElementById("cfg-scopeword").textContent = curScope==="file" ? "this file" : "directory";
   const sel=new Set(curSel());
   const box=document.getElementById("cfg-presets");
-  if(!presetsAvail.length){ box.innerHTML='<div class="sp" style="padding:4px 2px">프리셋 없음 — 아래에서 만들거나 <code>.ducklab/prompts/*.md</code> 추가</div>'; return; }
+  if(!presetsAvail.length){ box.innerHTML='<div class="sp" style="padding:4px 2px">No presets — create one below or add <code>.ducklab/prompts/*.md</code> </div>'; return; }
   box.innerHTML=presetsAvail.map(p=>`<label class="preset ${sel.has(p.name)?'on':''}">
     <input type="checkbox" data-preset="${p.name}" ${sel.has(p.name)?'checked':''}>
     <span class="pmeta"><div class="pl">${p.label}</div><div class="pt">${p.name}.md</div></span>
     <span class="src">${p.source}</span>
-    <button class="pedit" data-editp="${p.name}" data-editsrc="${p.source}">편집</button></label>`).join("");
+    <button class="pedit" data-editp="${p.name}" data-editsrc="${p.source}">Edit</button></label>`).join("");
   box.querySelectorAll("[data-editp]").forEach(b=>b.onclick=(ev)=>{
     ev.preventDefault(); ev.stopPropagation();  // don't toggle the checkbox
     openPresetEditor(b.dataset.editp, b.dataset.editsrc);
@@ -801,8 +801,8 @@ async function openPresetEditor(name, source){
   const ed=document.createElement("div"); ed.className="peditor";
   ed.innerHTML=`<div class="ptitle"><b>${name}.md</b> · ${source}</div>
     <textarea></textarea>
-    <div class="prow"><button class="del" style="color:var(--err)">삭제</button><span class="sp"></span>
-      <button class="cancel">취소</button><button class="save primary">저장</button></div>`;
+    <div class="prow"><button class="del" style="color:var(--err)">Delete</button><span class="sp"></span>
+      <button class="cancel">Cancel</button><button class="save primary">Save</button></div>`;
   ed.querySelector("textarea").value=d.text;
   box.parentNode.insertBefore(ed, box.nextSibling);
   ed.querySelector("textarea").focus();
@@ -810,13 +810,13 @@ async function openPresetEditor(name, source){
   ed.querySelector(".save").onclick=async()=>{
     await fetch("/api/presets/save",{method:"POST",headers:{"Content-Type":"application/json"},
       body:JSON.stringify({name,source,text:ed.querySelector("textarea").value})});
-    ed.remove(); await reloadPresets(); showToast("프리셋 저장됨: "+name);
+    ed.remove(); await reloadPresets(); showToast("Preset saved: "+name);
   };
   ed.querySelector(".del").onclick=async()=>{
-    if(!confirm(`프리셋 ${name} 삭제?`)) return;
+    if(!confirm(`Delete preset ${name}?`)) return;
     await fetch("/api/presets/delete",{method:"POST",headers:{"Content-Type":"application/json"},
       body:JSON.stringify({name,source})});
-    ed.remove(); await reloadPresets(); showToast("삭제됨: "+name);
+    ed.remove(); await reloadPresets(); showToast("Deleted: "+name);
   };
 }
 function stashScope(){
@@ -834,14 +834,14 @@ function showScope(s){
   if(s==="dir"){
     a.value=cfgDir.agent; p.value=cfgDir.prompt;
     a.placeholder="claude"; p.placeholder="";
-    note.textContent="이 디렉터리 모든 파일의 기본";
+    note.textContent="default for all files in this directory";
     rm.style.display="none";
   }else{
     const v=cfgFile||{agent:"",prompt:""};
     a.value=v.agent; p.value=v.prompt;
-    a.placeholder="(빈칸 = 디렉터리 기본 사용)";
-    p.placeholder="이 파일 전용 프롬프트 — 저장하면 디렉터리 기본을 덮습니다. 둘 다 빈칸으로 저장 = 오버라이드 제거";
-    note.textContent=cfgFile?"오버라이드 적용 중":"오버라이드 없음 (저장하면 생성)";
+    a.placeholder="(empty = use directory default)";
+    p.placeholder="Per-file prompt — saving overrides the directory default. Save both empty to remove the override.";
+    note.textContent=cfgFile?"override active":"no override (save to create)";
     rm.style.display=cfgFile?"inline-block":"none";
   }
   renderPresets();
@@ -853,7 +853,7 @@ async function openSettings(){
   cfgFile=c.file_override?{agent:c.file_override.agent||"",prompt:c.file_override.prompt_template||""}:null;
   presetsAvail=c.presets_available||[]; selDir=c.presets_dir||[]; selFile=c.presets_file||null;
   document.getElementById("cfg-workspace").value=c.workspace||"";
-  document.getElementById("cfg-note").textContent=c.overridden_by_cli?"주의: --term-cmd CLI 오버라이드가 켜져 있어 설정이 무시됩니다":"";
+  document.getElementById("cfg-note").textContent=c.overridden_by_cli?"note: --term-cmd CLI override is on, so these settings are ignored":"";
   showScope(c.file_override?"file":"dir");
   settings.classList.add("open");
 }
@@ -869,13 +869,13 @@ document.getElementById("cfg-remove-over").onclick=async()=>{
 document.getElementById("cfg-newpreset").onclick=async()=>{
   const name=document.getElementById("cfg-newpreset-name").value.trim();
   const text=document.getElementById("cfg-prompt").value;
-  if(!name){ alert("프리셋 이름을 입력하세요"); return; }
+  if(!name){ alert("Enter a preset name"); return; }
   const r=await fetch("/api/presets/new",{method:"POST",headers:{"Content-Type":"application/json"},
     body:JSON.stringify({name,text,scope:"workspace"})});
   const j=await r.json();
   if(!j.ok){ alert(j.error); return; }
   document.getElementById("cfg-newpreset-name").value="";
-  await reloadPresets(); showToast("프리셋 저장: "+j.name);
+  await reloadPresets(); showToast("Preset saved: "+j.name);
 };
 document.getElementById("cfg-save").onclick=async()=>{
   await fetch("/api/config",{method:"POST",headers:{"Content-Type":"application/json"},
@@ -891,7 +891,7 @@ document.getElementById("cfg-save").onclick=async()=>{
 let term=null, tws=null, fit=null;
 const termwrap=document.createElement("div"); termwrap.id="termwrap";
 termwrap.innerHTML='<div id="termgrip"></div><div id="termbar"><span>terminal</span><span class="sp"></span>'+
-  '<button id="termdock" title="dock">⇥ 우측</button><button id="termkill" title="세션 종료(에이전트 종료)">⏻ 종료</button><button id="termclose" title="닫기(세션 유지)">×</button></div><div id="term"></div>';
+  '<button id="termdock" title="dock">⇥ Right</button><button id="termkill" title="Kill session (ends the agent)">⏻ Kill</button><button id="termclose" title="Close (keep session)">×</button></div><div id="term"></div>';
 document.body.appendChild(termwrap);
 let dock = localStorage.ducklab_dock || "bottom";
 function applyDock(){
@@ -902,7 +902,7 @@ function applyDock(){
   const h=localStorage.ducklab_termh, w=localStorage.ducklab_termw;
   if(h) document.documentElement.style.setProperty("--termh", h+"px");
   if(w) document.documentElement.style.setProperty("--termw", w+"px");
-  document.getElementById("termdock").textContent = dock==="bottom" ? "⇥ 우측" : "⇩ 하단";
+  document.getElementById("termdock").textContent = dock==="bottom" ? "⇥ Right" : "⇩ Bottom";
   if(fit) requestAnimationFrame(()=>fit.fit());
 }
 function openTerm(){
@@ -926,12 +926,12 @@ document.getElementById("termtoggle").onclick=()=>termwrap.classList.contains("o
 termwrap.addEventListener("click",async(e)=>{
   if(e.target.id==="termclose") closeTerm();
   else if(e.target.id==="termkill"){
-    if(!confirm("터미널 세션을 종료할까요? 실행 중인 에이전트도 종료됩니다.")) return;
+    if(!confirm("Kill the terminal session? The running agent is terminated too.")) return;
     await fetch("/api/terminals/close",{method:"POST",headers:{"Content-Type":"application/json"},
       body:JSON.stringify({file:FILE||null})});
     try{ tws&&tws.close(); }catch(_){}
     if(term){ term.dispose(); term=null; } tws=null; fit=null;
-    closeTerm(); showToast("터미널 세션 종료됨");
+    closeTerm(); showToast("Terminal session killed");
   }
   else if(e.target.id==="termdock"){ dock = dock==="bottom" ? "right" : "bottom";
     localStorage.ducklab_dock = dock; applyDock(); }

@@ -684,7 +684,7 @@ def create_app(root: Path, initial: str | None = None, host: str = "127.0.0.1",
         source = body.get("source", "workspace")
         f = _preset_path(name, source)
         if not f.exists():
-            return {"ok": False, "error": f"{name} 없음"}
+            return {"ok": False, "error": f"{name} not found"}
         f.write_text(str(body.get("text", "")))
         return {"ok": True, "name": name, "source": source}
 
@@ -700,13 +700,13 @@ def create_app(root: Path, initial: str | None = None, host: str = "127.0.0.1",
         name = "".join(c for c in str(body.get("name", "")).strip()
                        if c.isalnum() or c in "-_").strip("-_")
         if not name:
-            return {"ok": False, "error": "이름은 영숫자/-/_ 만"}
+            return {"ok": False, "error": "name must be alphanumeric / - / _"}
         scope = body.get("scope", "workspace")
         base = GLOBAL_PROMPTS if scope == "global" else (hub.root / PROMPTS_SUBDIR)
         base.mkdir(parents=True, exist_ok=True)
         f = base / f"{name}.md"
         if f.exists() and not body.get("overwrite"):
-            return {"ok": False, "error": f"{name} 이미 있음"}
+            return {"ok": False, "error": f"{name} already exists"}
         f.write_text(str(body.get("text", "")))
         return {"ok": True, "name": name, "source": scope, "path": str(f)}
 
@@ -860,7 +860,7 @@ def create_app(root: Path, initial: str | None = None, host: str = "127.0.0.1",
                     await session.send_all({"type": "clear_all"})
                 elif msg["type"] == "undo":
                     if not session.undo_stack:
-                        await ws.send_text(json.dumps({"type": "toast", "text": "되돌릴 작업이 없습니다"}))
+                        await ws.send_text(json.dumps({"type": "toast", "text": "Nothing to undo"}))
                         continue
                     e = session.undo_stack.pop()
                     if e["kind"] == "file":
@@ -870,12 +870,12 @@ def create_app(root: Path, initial: str | None = None, host: str = "127.0.0.1",
                         session.outputs = {k: v for k, v in e["outputs"].items() if k in live}
                         await session.send_all(session.cells_msg())
                         await session.send_all({"type": "restore_outputs", "outputs": session.outputs})
-                        await session.send_all({"type": "toast", "text": "삭제 되돌림"})
+                        await session.send_all({"type": "toast", "text": "Delete undone"})
                     else:
                         for cid, arr in e["outputs"].items():
                             session.outputs[cid] = arr
                         await session.send_all({"type": "restore_outputs", "outputs": e["outputs"]})
-                        await session.send_all({"type": "toast", "text": "출력 복구됨"})
+                        await session.send_all({"type": "toast", "text": "Outputs restored"})
                 elif msg["type"] == "restart":
                     if session.kernel:
                         await asyncio.get_running_loop().run_in_executor(
