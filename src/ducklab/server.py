@@ -38,6 +38,8 @@ from .kernel import FileKernel
 
 STATIC = Path(__file__).parent / "static"
 GLOBAL_CONFIG = Path.home() / ".ducklab.json"
+GLOBAL_PROMPTS = Path.home() / ".ducklab" / "prompts"
+PROMPTS_SUBDIR = ".ducklab/prompts"
 SKIP_DIRS = {".venv", "venv", "node_modules", "__pycache__", ".git", ".ipynb_checkpoints"}
 
 DEFAULT_PROMPT = (
@@ -142,6 +144,69 @@ def build_term_cmd(cfg: dict, file: Path, rel: str, host: str, port: int) -> str
         return None
     agent, prompt = parts
     return f"{agent} {shlex.quote(prompt)}" if prompt else agent
+
+
+# --------------------------------------------------------------- presets ----
+def _preset_label(text: str, name: str) -> str:
+    for line in text.splitlines():
+        s = line.strip()
+        if s.startswith("#"):
+            return s.lstrip("#").strip() or name
+        if s:
+            break
+    return name
+
+
+def list_presets(root: Path) -> list[dict]:
+    """Named prompt snippets from <workspace>/.ducklab/prompts/*.md and
+    ~/.ducklab/prompts/*.md. A workspace preset shadows a global one by name."""
+    out: dict[str, dict] = {}
+    for base, source in ((GLOBAL_PROMPTS, "global"), (root / PROMPTS_SUBDIR, "workspace")):
+        if base.is_dir():
+            for p in sorted(base.glob("*.md")):
+                text = p.read_text()
+                out[p.stem] = {"name": p.stem, "label": _preset_label(text, p.stem),
+                               "source": source, "text": text}
+    return list(out.values())
+
+
+def preset_texts(root: Path, names: list[str]) -> list[str]:
+    lib = {p["name"]: p["text"] for p in list_presets(root)}
+    return [lib[n] for n in names if n in lib]
+
+
+def effective_presets(dirpath: Path, filename: str) -> list[str]:
+    """Selected preset names: file override if it sets `presets`, else dir."""
+    cfg = load_dir_config(dirpath)
+    over = (cfg.get("files") or {}).get(filename) or {}
+    return over["presets"] if "presets" in over else (cfg.get("presets") or [])
+
+
+def compose_prompt_text(root: Path, cfg: dict, dirpath: Path, filename: str,
+                        file: Path, rel: str, host: str, port: int) -> str | None:
+    """The rendered prompt string (base prompt ++ imported presets), or None."""
+    def render(t: str) -> str:
+        return (t.replace("{file}", str(file)).replace("{url}", f"http://{host}:{port}")
+                 .replace("{rel}", rel))
+    parts = []
+    base = cfg.get("prompt_template") or ""
+    if base.strip():
+        parts.append(render(base))
+    for txt in preset_texts(root, effective_presets(dirpath, filename)):
+        if txt.strip():
+            parts.append(render(txt))
+    return "\n\n".join(parts) if parts else None
+
+
+def compose_prompt(root: Path, cfg: dict, dirpath: Path, filename: str,
+                   file: Path, rel: str, host: str, port: int) -> str | None:
+    """Full terminal launch line: agent + shlex-quoted prompt (or bare agent)."""
+    agent = (cfg.get("agent") or "").strip()
+    if not agent:
+        return None
+    prompt = compose_prompt_text(root, cfg, dirpath, filename, file, rel, host, port)
+    return f"{agent} {shlex.quote(prompt)}" if prompt else agent
+
 
 
 # --------------------------------------------------------------- session ----
@@ -483,6 +548,42 @@ def create_app(root: Path, initial: str | None = None, host: str = "127.0.0.1",
         await s.send_all({"type": "status", "state": "env_changed"})
         return {"ok": True, "python": python, "note": "kernel stopped; next run uses the new env"}
 
+    @app.post("/api/presets/select")
+    async def api_presets_select(body: dict):
+        """Choose which presets a scope imports. scope=dir|file; names=[...]."""
+        s = hub.session(body.get("file"))
+        names = [str(n) for n in (body.get("names") or [])]
+        cur = load_dir_config(s.file.parent)
+        if body.get("scope") == "file":
+            files = cur.get("files") or {}
+            over = files.get(s.file.name) or {}
+            over["presets"] = names
+            if not over.get("agent") and not over.get("prompt_template") \
+               and not over.get("env") and not names:
+                files.pop(s.file.name, None)      # nothing left = drop override
+            else:
+                files[s.file.name] = over
+            cur["files"] = files
+        else:
+            cur["presets"] = names
+        save_dir_config(s.file.parent, cur)
+        return {"ok": True}
+
+    @app.post("/api/presets/new")
+    async def api_presets_new(body: dict):
+        name = "".join(c for c in str(body.get("name", "")).strip()
+                       if c.isalnum() or c in "-_").strip("-_")
+        if not name:
+            return {"ok": False, "error": "이름은 영숫자/-/_ 만"}
+        scope = body.get("scope", "workspace")
+        base = GLOBAL_PROMPTS if scope == "global" else (hub.root / PROMPTS_SUBDIR)
+        base.mkdir(parents=True, exist_ok=True)
+        f = base / f"{name}.md"
+        if f.exists() and not body.get("overwrite"):
+            return {"ok": False, "error": f"{name} 이미 있음"}
+        f.write_text(str(body.get("text", "")))
+        return {"ok": True, "name": name, "source": scope, "path": str(f)}
+
     @app.get("/api/config")
     async def api_config_get(file: str | None = None):
         s = hub.session(file)
@@ -491,13 +592,18 @@ def create_app(root: Path, initial: str | None = None, host: str = "127.0.0.1",
         eff, has_over = effective_config(s.file.parent, s.file.name)
         g = load_global_config()
         return {"dir": {"agent": dir_cfg.get("agent", "claude"),
-                        "prompt_template": dir_cfg.get("prompt_template", DEFAULT_PROMPT)},
+                        "prompt_template": dir_cfg.get("prompt_template", DEFAULT_PROMPT),
+                        "presets": dir_cfg.get("presets") or []},
                 "file_override": over,
+                "presets_available": [{"name": pp["name"], "label": pp["label"],
+                                       "source": pp["source"]} for pp in list_presets(hub.root)],
+                "presets_dir": dir_cfg.get("presets") or [],
+                "presets_file": (over or {}).get("presets") if over and "presets" in over else None,
                 "agent": eff.get("agent", ""), "prompt_template": eff.get("prompt_template", ""),
                 "default_prompt": DEFAULT_PROMPT, "has_file_override": has_over,
                 "workspace": g.get("workspace", ""), "root": str(hub.root),
                 "effective_cmd": term_cmd_override if term_cmd_override is not None
-                else build_term_cmd(eff, s.file, s.rel, host, port),
+                else compose_prompt(hub.root, eff, s.file.parent, s.file.name, s.file, s.rel, host, port),
                 "overridden_by_cli": term_cmd_override is not None}
 
     @app.post("/api/config")
@@ -510,9 +616,12 @@ def create_app(root: Path, initial: str | None = None, host: str = "127.0.0.1",
         elif cfg.get("scope") == "file":
             agent = str(cfg.get("agent", "")).strip()
             prompt = str(cfg.get("prompt_template", "")).strip()
-            if agent or prompt:
-                files[s.file.name] = {"agent": agent, "prompt_template": prompt}
-            else:  # both empty = no override
+            over = files.get(s.file.name) or {}
+            over["agent"] = agent; over["prompt_template"] = prompt
+            over = {k: v for k, v in over.items() if v or k == "presets"}
+            if over.get("agent") or over.get("prompt_template") or over.get("presets") or over.get("env"):
+                files[s.file.name] = over
+            else:  # nothing left = no override
                 files.pop(s.file.name, None)
         else:  # directory defaults — omit values equal to the built-in defaults
             # so a later ducklab upgrade of DEFAULT_PROMPT flows through instead
@@ -604,17 +713,19 @@ def create_app(root: Path, initial: str | None = None, host: str = "127.0.0.1",
         if term_cmd_override is not None:
             line = term_cmd_override or None
         else:
-            parts = build_term_parts(eff, session.file, session.rel, host, port)
-            if parts is None:
+            agent = (eff.get("agent") or "").strip()
+            prompt = compose_prompt_text(hub.root, eff, session.file.parent,
+                                         session.file.name, session.file, session.rel, host, port)
+            if not agent:
                 line = None
+            elif prompt:
+                # pass the (possibly long) prompt via temp file so the typed line
+                # stays short — typing a big quoted string into a shell corrupts
+                pf = Path(tempfile.gettempdir()) / f"ducklab-prompt-{os.getpid()}-{id(ws)}.txt"
+                pf.write_text(prompt)
+                line = f'{agent} "$(cat {shlex.quote(str(pf))})"'
             else:
-                agent, prompt = parts
-                if prompt:
-                    pf = Path(tempfile.gettempdir()) / f"ducklab-prompt-{os.getpid()}-{id(ws)}.txt"
-                    pf.write_text(prompt)
-                    line = f'{agent} "$(cat {shlex.quote(str(pf))})"'
-                else:
-                    line = agent
+                line = agent
         if line:
             loop.call_later(0.8, pty.write, line + "\n")
 

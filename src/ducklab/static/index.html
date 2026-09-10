@@ -124,6 +124,17 @@ pre.code{margin:0;padding:12px 14px;background:var(--code);font-family:ui-monosp
 #settings .seg button.on{background:var(--accent);color:var(--accent-ink)}
 #settings .scopenote{font-size:12px;color:var(--muted);margin-left:10px}
 #settings .sp{flex:1;font-size:12px;color:var(--muted)}
+#settings .presets{display:flex;flex-direction:column;gap:6px;margin:6px 0}
+#settings .preset{display:flex;gap:9px;align-items:flex-start;padding:9px 11px;border:1px solid var(--rule);border-radius:9px;cursor:pointer}
+#settings .preset:hover{background:var(--code)}
+#settings .preset.on{border-color:var(--accent);background:color-mix(in srgb,var(--accent) 9%,transparent)}
+#settings .preset input{margin-top:2px}
+#settings .preset .pmeta{flex:1;min-width:0}
+#settings .preset .pl{font-weight:600;font-size:13px}
+#settings .preset .pt{font-size:11.5px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-family:ui-monospace,Menlo,monospace}
+#settings .preset .src{font-size:10px;color:var(--faint);border:1px solid var(--rule);border-radius:5px;padding:1px 6px;flex:none}
+#settings .newpreset{display:flex;gap:8px;margin-top:8px}
+#settings .newpreset input{flex:none;width:200px}
 #termwrap{position:fixed;z-index:9;background:#111;display:none;flex-direction:column}
 #termwrap.open{display:flex}
 #termwrap.bottom{left:0;right:0;bottom:0;height:var(--termh,42vh);border-top:2px solid var(--rule)}
@@ -450,6 +461,12 @@ settings.innerHTML=`
     <input type="text" id="cfg-agent" placeholder="claude">
     <label>Context prompt <span class="sub">— 플레이스홀더 {file} {url} {rel} · 빈칸 = 프롬프트 없이 실행</span></label>
     <textarea id="cfg-prompt"></textarea>
+    <label>Prompt presets <span class="sub">— 위 프롬프트에 임포트(합성)됨 · 현재 <b id="cfg-scopeword">디렉터리</b> 범위</span></label>
+    <div class="presets" id="cfg-presets"></div>
+    <div class="newpreset">
+      <input type="text" id="cfg-newpreset-name" placeholder="새 프리셋 이름 (a-z0-9-_)">
+      <button id="cfg-newpreset">현재 프롬프트로 프리셋 저장</button>
+    </div>
   </div></div>
   <div class="pfoot"><div class="pin">
     <button id="cfg-default">기본 프롬프트로</button>
@@ -460,6 +477,25 @@ settings.innerHTML=`
 document.body.appendChild(settings);
 let cfgDefault="";
 let cfgDir={agent:"",prompt:""}, cfgFile=null, curScope="dir";
+let presetsAvail=[], selDir=[], selFile=null;   // selFile=null → inherits dir
+function curSel(){ return curScope==="file" ? (selFile||[]) : selDir; }
+function renderPresets(){
+  document.getElementById("cfg-scopeword").textContent = curScope==="file" ? "이 파일" : "디렉터리";
+  const sel=new Set(curSel());
+  const box=document.getElementById("cfg-presets");
+  if(!presetsAvail.length){ box.innerHTML='<div class="sp" style="padding:4px 2px">프리셋 없음 — 아래에서 만들거나 <code>.ducklab/prompts/*.md</code> 추가</div>'; return; }
+  box.innerHTML=presetsAvail.map(p=>`<label class="preset ${sel.has(p.name)?'on':''}">
+    <input type="checkbox" data-preset="${p.name}" ${sel.has(p.name)?'checked':''}>
+    <span class="pmeta"><div class="pl">${p.label}</div><div class="pt">${p.name}.md</div></span>
+    <span class="src">${p.source}</span></label>`).join("");
+  box.querySelectorAll("[data-preset]").forEach(cb=>cb.onchange=async()=>{
+    const names=[...box.querySelectorAll("[data-preset]:checked")].map(x=>x.dataset.preset);
+    if(curScope==="file") selFile=names; else selDir=names;
+    await fetch("/api/presets/select",{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({file:FILE||null,scope:curScope,names})});
+    renderPresets();
+  });
+}
 function stashScope(){
   const v={agent:document.getElementById("cfg-agent").value,
            prompt:document.getElementById("cfg-prompt").value};
@@ -485,12 +521,14 @@ function showScope(s){
     note.textContent=cfgFile?"오버라이드 적용 중":"오버라이드 없음 (저장하면 생성)";
     rm.style.display=cfgFile?"inline-block":"none";
   }
+  renderPresets();
 }
 async function openSettings(){
   const r=await fetch("/api/config"+FQ); const c=await r.json();
   cfgDefault=c.default_prompt||"";
   cfgDir={agent:(c.dir&&c.dir.agent)||"", prompt:(c.dir&&c.dir.prompt_template)||""};
   cfgFile=c.file_override?{agent:c.file_override.agent||"",prompt:c.file_override.prompt_template||""}:null;
+  presetsAvail=c.presets_available||[]; selDir=c.presets_dir||[]; selFile=c.presets_file||null;
   document.getElementById("cfg-workspace").value=c.workspace||"";
   document.getElementById("cfg-note").textContent=c.overridden_by_cli?"주의: --term-cmd CLI 오버라이드가 켜져 있어 설정이 무시됩니다":"";
   showScope(c.file_override?"file":"dir");
@@ -505,6 +543,18 @@ document.getElementById("cfg-remove-over").onclick=async()=>{
   await fetch("/api/config",{method:"POST",headers:{"Content-Type":"application/json"},
     body:JSON.stringify({file:FILE||null,remove_file_override:true})});
   cfgFile=null; showScope("file");};
+document.getElementById("cfg-newpreset").onclick=async()=>{
+  const name=document.getElementById("cfg-newpreset-name").value.trim();
+  const text=document.getElementById("cfg-prompt").value;
+  if(!name){ alert("프리셋 이름을 입력하세요"); return; }
+  const r=await fetch("/api/presets/new",{method:"POST",headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({name,text,scope:"workspace"})});
+  const j=await r.json();
+  if(!j.ok){ alert(j.error); return; }
+  document.getElementById("cfg-newpreset-name").value="";
+  const cc=await (await fetch("/api/config"+FQ)).json();
+  presetsAvail=cc.presets_available||[]; renderPresets(); showToast("프리셋 저장: "+j.name);
+};
 document.getElementById("cfg-save").onclick=async()=>{
   await fetch("/api/config",{method:"POST",headers:{"Content-Type":"application/json"},
     body:JSON.stringify({file:FILE||null,

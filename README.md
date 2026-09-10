@@ -64,6 +64,10 @@ notebook."*
   `/api/outputs/{idx}`). Prompts are configurable per directory *and per file*.
 - **Per-cell AI ask** — one-line instruction, injected into the agent's terminal
   with `cell [idx] "title"` context.
+- **Prompt presets** — reusable context snippets as `.ducklab/prompts/*.md`
+  (workspace or global `~/.ducklab/prompts/`); import any subset into a file's
+  context (e.g. a mid-frequency toolkit + an HFT-features preset), composed on
+  top of the base prompt. Selectable per directory or per file.
 - **In-browser editing** — CodeMirror per cell (⌘/Ctrl+Enter = save & run); saves
   rewrite only that cell's span on disk, markers preserved, so browser edits and
   agent edits are the same code path: *the file is the truth*.
