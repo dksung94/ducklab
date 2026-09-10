@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import base64
 import json
 import os
 import shlex
@@ -67,7 +68,10 @@ DEFAULT_PROMPT = (
     "run one (blocks, returns outputs): curl -s -XPOST '{url}/api/run/<idx>?file={rel}' ; "
     "run all: curl -s -XPOST '{url}/api/run_all?file={rel}' ; "
     "read last outputs: curl -s '{url}/api/outputs/<idx>?file={rel}' . "
-    "Images render in the browser and appear elided in the API. "
+    "The response has a per-cell 'status' (ok/error) and 'outputs'. Text is "
+    "returned inline; plots are elided by default — to SEE a plot, add "
+    "&images=files and Read the returned PNG path. So the loop is: edit the "
+    "file, run the cell(s), read status+outputs (Read any image path), iterate. "
     "Do NOT run cells or edit the file until the human asks — start by "
     "reading the file and briefly saying what you see."
 )
@@ -315,13 +319,23 @@ class Session:
                 return c
         return None
 
-    def outputs_view(self, cell_id: str) -> list[dict]:
-        """Outputs with image payloads elided — agents read text, not base64."""
-        out = []
+    def outputs_view(self, cell_id: str, images: str = "elide") -> list[dict]:
+        """Outputs for the API. images='elide' (default) drops base64 payloads;
+        images='files' writes each PNG to disk and returns its path so a
+        vision-capable agent can Read (see) the plot."""
+        out, i = [], 0
         for o in self.outputs.get(cell_id, []):
             if o["kind"] == "image":
-                out.append({"kind": "image",
-                            "data": f"<png rendered in browser, {len(o['data'])} b64 chars>"})
+                if images == "files":
+                    d = Path(tempfile.gettempdir()) / "ducklab-img"
+                    d.mkdir(exist_ok=True)
+                    fp = d / f"{cell_id}-{i}.png"
+                    fp.write_bytes(base64.b64decode(o["data"]))
+                    out.append({"kind": "image", "path": str(fp)})
+                    i += 1
+                else:
+                    out.append({"kind": "image",
+                                "data": f"<png rendered in browser, {len(o['data'])} b64 chars>"})
             else:
                 out.append(o)
         return out
@@ -518,7 +532,7 @@ def create_app(root: Path, initial: str | None = None, host: str = "127.0.0.1",
                  "has_output": bool(s.outputs.get(c.id))} for c in s.cells]
 
     @app.post("/api/run/{ref}")
-    async def api_run(ref: str, file: str | None = None, wait: bool = True):
+    async def api_run(ref: str, file: str | None = None, wait: bool = True, images: str = "elide"):
         s = hub.session(file)
         cell = s.find_cell(ref)
         if cell is None:
@@ -526,26 +540,29 @@ def create_app(root: Path, initial: str | None = None, host: str = "127.0.0.1",
         fut = s.submit_run(cell.id)
         if wait:
             await asyncio.wrap_future(fut)
-            return {"ok": True, "cell": cell.idx, "outputs": s.outputs_view(cell.id)}
+            return {"ok": True, "cell": cell.idx, "status": s.run_status.get(cell.id),
+                    "outputs": s.outputs_view(cell.id, images)}
         return {"ok": True, "cell": cell.idx, "queued": True}
 
     @app.post("/api/run_all")
-    async def api_run_all(file: str | None = None, wait: bool = True):
+    async def api_run_all(file: str | None = None, wait: bool = True, images: str = "elide"):
         s = hub.session(file)
         futs = [(c, s.submit_run(c.id)) for c in s.cells]
         if wait:
             for _, fut in futs:
                 await asyncio.wrap_future(fut)
-            return {"ok": True, "outputs": {c.idx: s.outputs_view(c.id) for c, _ in futs}}
+            return {"ok": True, "outputs": {c.idx: s.outputs_view(c.id, images) for c, _ in futs},
+                    "status": {c.idx: s.run_status.get(c.id) for c, _ in futs}}
         return {"ok": True, "queued": len(futs)}
 
     @app.get("/api/outputs/{ref}")
-    async def api_outputs(ref: str, file: str | None = None):
+    async def api_outputs(ref: str, file: str | None = None, images: str = "elide"):
         s = hub.session(file)
         cell = s.find_cell(ref)
         if cell is None:
             return {"ok": False, "error": f"no cell {ref!r}; see /api/cells"}
-        return {"ok": True, "cell": cell.idx, "outputs": s.outputs_view(cell.id)}
+        return {"ok": True, "cell": cell.idx, "status": s.run_status.get(cell.id),
+                "outputs": s.outputs_view(cell.id, images)}
 
     def _rss_mb(pid: int | None) -> float | None:
         if not pid:
