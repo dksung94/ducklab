@@ -386,9 +386,14 @@ def create_app(root: Path, initial: str | None = None, host: str = "127.0.0.1",
     @app.get("/api/config")
     async def api_config_get(file: str | None = None):
         s = hub.session(file)
+        dir_cfg = load_dir_config(s.file.parent)
+        over = (dir_cfg.get("files") or {}).get(s.file.name)
         eff, has_over = effective_config(s.file.parent, s.file.name)
         g = load_global_config()
-        return {"agent": eff.get("agent", ""), "prompt_template": eff.get("prompt_template", ""),
+        return {"dir": {"agent": dir_cfg.get("agent", "claude"),
+                        "prompt_template": dir_cfg.get("prompt_template", DEFAULT_PROMPT)},
+                "file_override": over,
+                "agent": eff.get("agent", ""), "prompt_template": eff.get("prompt_template", ""),
                 "default_prompt": DEFAULT_PROMPT, "has_file_override": has_over,
                 "workspace": g.get("workspace", ""), "root": str(hub.root),
                 "effective_cmd": term_cmd_override if term_cmd_override is not None
@@ -403,8 +408,12 @@ def create_app(root: Path, initial: str | None = None, host: str = "127.0.0.1",
         if cfg.get("remove_file_override"):
             files.pop(s.file.name, None)
         elif cfg.get("scope") == "file":
-            files[s.file.name] = {"agent": str(cfg.get("agent", "")),
-                                  "prompt_template": str(cfg.get("prompt_template", ""))}
+            agent = str(cfg.get("agent", "")).strip()
+            prompt = str(cfg.get("prompt_template", "")).strip()
+            if agent or prompt:
+                files[s.file.name] = {"agent": agent, "prompt_template": prompt}
+            else:  # both empty = no override
+                files.pop(s.file.name, None)
         else:  # directory defaults — omit values equal to the built-in defaults
             # so a later ducklab upgrade of DEFAULT_PROMPT flows through instead
             # of being frozen by an old save

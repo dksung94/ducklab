@@ -18,7 +18,10 @@ body{margin:0;background:var(--bg);color:var(--ink);font-family:ui-sans-serif,-a
 .dot{width:9px;height:9px;border-radius:50%;background:#b33;flex:none}
 .dot.on{background:var(--accent)}
 button{font:inherit;font-size:13px;border:1px solid var(--rule);background:var(--card);color:var(--ink);
- border-radius:8px;padding:6px 12px;cursor:pointer}
+ border-radius:8px;padding:6px 12px;cursor:pointer;transition:background .12s}
+button:hover{background:var(--code)}
+button.primary:hover{background:var(--accent);filter:brightness(1.08)}
+button:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
 button.primary{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
 button:active{transform:translateY(1px)}
 .wrap{max-width:880px;margin:0 auto;padding:14px 12px 90px}
@@ -26,18 +29,22 @@ button:active{transform:translateY(1px)}
 .cell.busy{border-color:var(--busy)}
 @keyframes cellflash{0%{border-color:var(--accent);box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 35%,transparent)}100%{border-color:var(--rule);box-shadow:none}}
 .cell.flash{animation:cellflash 1.6s ease-out}
-.chead{display:flex;align-items:center;gap:8px;padding:7px 12px;border-bottom:1px solid var(--rule)}
-.chead .t{font-size:12px;color:var(--muted);flex:1;font-family:ui-monospace,Menlo,monospace;
+.chead{display:flex;align-items:center;gap:9px;padding:7px 10px 7px 12px;border-bottom:1px solid var(--rule)}
+.chead .idx{font-family:ui-monospace,Menlo,monospace;font-size:10.5px;font-weight:700;color:var(--muted);
+ background:var(--code);border:1px solid var(--rule);border-radius:6px;padding:1px 7px;flex:none}
+.chead .t{font-size:12.5px;color:var(--ink);font-weight:600;flex:1;font-family:ui-monospace,Menlo,monospace;
  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.chead button{padding:3px 10px;font-size:12px}
+.chead .t .ln{color:var(--faint,#999);font-weight:400}
+.chead button{padding:3px 11px;font-size:12px;opacity:.85}
+.chead button:hover{opacity:1}
 pre.code{margin:0;padding:12px 14px;background:var(--code);font-family:ui-monospace,"SF Mono",Menlo,monospace;
  font-size:12.5px;line-height:1.5;overflow-x:auto;white-space:pre;-webkit-overflow-scrolling:touch}
-.out{padding:6px 14px 10px;display:none}
+.out{padding:8px 14px 12px;display:none;border-top:1px dashed var(--rule)}
 .out.has{display:block}
-.out pre{margin:6px 0;font-family:ui-monospace,Menlo,monospace;font-size:12px;line-height:1.45;
+.out pre{margin:6px 0;font-family:ui-monospace,Menlo,monospace;font-size:12px;line-height:1.5;
  white-space:pre-wrap;word-break:break-word;overflow-x:auto}
-.out pre.err{color:var(--err)}
-.out img{max-width:100%;border-radius:6px;margin:6px 0;display:block}
+.out pre.err{color:var(--err);border-left:3px solid var(--err);padding-left:10px}
+.out img{max-width:100%;border-radius:8px;margin:8px 0;display:block;background:#fff}
 .spin{font-size:11px;color:var(--busy);padding:0 12px 8px;display:none}
 .cell.busy .spin{display:block}
 @media (prefers-color-scheme:dark){pre.code.cm-s-dracula{background:#282a36}}
@@ -70,18 +77,26 @@ pre.code{margin:0;padding:12px 14px;background:var(--code);font-family:ui-monosp
 #drawer .krow .dead{color:var(--muted);font-style:italic}
 #scrim{position:fixed;inset:0;z-index:14;background:rgba(0,0,0,.35);display:none}
 #scrim.open{display:block}
-#settings{position:fixed;inset:0;z-index:20;display:none;align-items:center;justify-content:center;background:rgba(0,0,0,.45)}
-#settings.open{display:flex}
-#settings .panel{background:var(--card);border:1px solid var(--rule);border-radius:14px;width:min(620px,92vw);
- max-height:86vh;overflow:auto;padding:20px}
-#settings h3{margin:0 0 4px;font-size:16px}
-#settings .hint{font-size:12.5px;color:var(--muted);margin:0 0 14px;line-height:1.55}
-#settings label{display:block;font-size:12.5px;font-weight:700;color:var(--ink);margin:14px 0 5px}
-#settings input[type=text],#settings textarea{width:100%;font:12.5px ui-monospace,Menlo,monospace;color:var(--ink);
- background:var(--code);border:1px solid var(--rule);border-radius:8px;padding:8px 10px}
-#settings textarea{min-height:180px;resize:vertical;line-height:1.5}
-#settings .row{display:flex;gap:8px;margin-top:16px;align-items:center}
-#settings .row .sp{flex:1;font-size:11px;color:var(--muted)}
+#settings{position:fixed;inset:0;z-index:20;display:none;background:var(--bg)}
+#settings.open{display:flex;flex-direction:column}
+#settings .phead{display:flex;align-items:center;gap:12px;padding:12px 20px;border-bottom:1px solid var(--rule);flex:none}
+#settings .phead h3{margin:0;font-size:17px;flex:1}
+#settings .pbody{flex:1;overflow-y:auto}
+#settings .pin{max-width:760px;margin:0 auto;padding:22px 20px 40px}
+#settings .pfoot{flex:none;border-top:1px solid var(--rule);background:var(--card)}
+#settings .pfoot .pin{display:flex;gap:10px;align-items:center;padding:12px 20px}
+#settings .hint{font-size:13px;color:var(--muted);margin:0 0 18px;line-height:1.6}
+#settings label{display:block;font-size:12.5px;font-weight:700;color:var(--ink);margin:18px 0 6px}
+#settings label .sub{font-weight:400;color:var(--muted)}
+#settings input[type=text],#settings textarea{width:100%;font:13px ui-monospace,Menlo,monospace;color:var(--ink);
+ background:var(--code);border:1px solid var(--rule);border-radius:9px;padding:9px 12px}
+#settings input[type=text]:focus,#settings textarea:focus{outline:2px solid var(--accent);outline-offset:-1px}
+#settings textarea{min-height:44vh;resize:vertical;line-height:1.55}
+#settings .seg{display:inline-flex;border:1px solid var(--rule);border-radius:9px;overflow:hidden;margin:2px 0 8px}
+#settings .seg button{border:0;border-radius:0;padding:6px 14px;font-size:12.5px;background:var(--card);color:var(--muted)}
+#settings .seg button.on{background:var(--accent);color:var(--accent-ink)}
+#settings .scopenote{font-size:12px;color:var(--muted);margin-left:10px}
+#settings .sp{flex:1;font-size:12px;color:var(--muted)}
 #termwrap{position:fixed;z-index:9;background:#111;display:none;flex-direction:column}
 #termwrap.open{display:flex}
 #termwrap.bottom{left:0;right:0;bottom:0;height:var(--termh,42vh);border-top:2px solid var(--rule)}
@@ -171,7 +186,7 @@ function render(cells){
     const d = document.createElement("div");
     d.className = "cell"; d.id = "cell-"+c.id;
     d.innerHTML = `
-      <div class="chead"><span class="t">[${c.idx}] ${c.title||("L"+c.lineno)}</span>
+      <div class="chead"><span class="idx">${c.idx}</span><span class="t">${c.title||('<span class="ln">L'+c.lineno+"</span>")}</span>
         <button data-edit="${c.id}">Edit</button>
         <button data-run="${c.id}">Run</button></div>
       <pre class="code"></pre>
@@ -293,55 +308,84 @@ scrim.onclick=closeDrawer;
 
 // ---- settings modal ----
 const settings=document.createElement("div"); settings.id="settings";
-settings.innerHTML=`<div class="panel">
-  <h3>Settings</h3>
-  <p class="hint">터미널을 열 때 자동 실행되는 에이전트와, 그 에이전트에게 주입되는 컨텍스트 프롬프트.
-     저장은 파일 옆 <code>.ducklab.json</code> — <b>다음에 여는 터미널부터</b> 적용.</p>
-  <label>Agent command (claude · codex · 빈칸 = 셸만)</label>
-  <input type="text" id="cfg-agent" placeholder="claude">
-  <label>Default workspace — 인자 없이 <code>ducklab</code> 실행 시 열 디렉터리 (다음 실행부터)</label>
-  <input type="text" id="cfg-workspace" placeholder="~/PycharmProjects/psi">
-  <label>Context prompt — 플레이스홀더 {file} {url} {rel} · 빈칸 = 프롬프트 없이 실행</label>
-  <div style="display:flex;gap:14px;align-items:center;font-size:12.5px;margin:2px 0 6px">
-    <label style="display:flex;gap:5px;align-items:center;margin:0;font-weight:400;color:var(--ink)">
-      <input type="radio" name="cfg-scope" value="dir" checked> 디렉터리 기본값</label>
-    <label style="display:flex;gap:5px;align-items:center;margin:0;font-weight:400;color:var(--ink)">
-      <input type="radio" name="cfg-scope" value="file"> 이 파일 전용</label>
-    <button id="cfg-remove-over" style="display:none;font-size:11px;padding:3px 9px">파일 오버라이드 제거</button>
-  </div>
-  <textarea id="cfg-prompt"></textarea>
-  <div class="row">
+settings.innerHTML=`
+  <div class="phead"><h3>Settings</h3><button id="cfg-cancel">✕ 닫기</button></div>
+  <div class="pbody"><div class="pin">
+    <p class="hint">터미널을 열 때 자동 실행되는 에이전트와, 그 에이전트에게 주입되는 컨텍스트 프롬프트.
+       저장은 파일 옆 <code>.ducklab.json</code> — <b>다음에 여는 터미널부터</b> 적용.</p>
+    <label>Default workspace <span class="sub">— 인자 없이 <code>ducklab</code> 실행 시 열 디렉터리 (다음 실행부터)</span></label>
+    <input type="text" id="cfg-workspace" placeholder="~/PycharmProjects/psi">
+    <label>적용 범위</label>
+    <div style="display:flex;align-items:center">
+      <div class="seg">
+        <button id="scope-dir" class="on">디렉터리 기본값</button>
+        <button id="scope-file">이 파일 전용</button>
+      </div>
+      <span class="scopenote" id="cfg-scopenote"></span>
+    </div>
+    <label>Agent command <span class="sub">— claude · codex · 빈칸 = 셸만</span></label>
+    <input type="text" id="cfg-agent" placeholder="claude">
+    <label>Context prompt <span class="sub">— 플레이스홀더 {file} {url} {rel} · 빈칸 = 프롬프트 없이 실행</span></label>
+    <textarea id="cfg-prompt"></textarea>
+  </div></div>
+  <div class="pfoot"><div class="pin">
     <button id="cfg-default">기본 프롬프트로</button>
+    <button id="cfg-remove-over" style="display:none">파일 오버라이드 제거</button>
     <span class="sp" id="cfg-note"></span>
-    <button id="cfg-cancel">Cancel</button>
     <button id="cfg-save" class="primary">Save</button>
   </div></div>`;
 document.body.appendChild(settings);
 let cfgDefault="";
+let cfgDir={agent:"",prompt:""}, cfgFile=null, curScope="dir";
+function stashScope(){
+  const v={agent:document.getElementById("cfg-agent").value,
+           prompt:document.getElementById("cfg-prompt").value};
+  if(curScope==="dir") cfgDir=v; else cfgFile=v;
+}
+function showScope(s){
+  curScope=s;
+  document.getElementById("scope-dir").classList.toggle("on", s==="dir");
+  document.getElementById("scope-file").classList.toggle("on", s==="file");
+  const a=document.getElementById("cfg-agent"), p=document.getElementById("cfg-prompt");
+  const note=document.getElementById("cfg-scopenote");
+  const rm=document.getElementById("cfg-remove-over");
+  if(s==="dir"){
+    a.value=cfgDir.agent; p.value=cfgDir.prompt;
+    a.placeholder="claude"; p.placeholder="";
+    note.textContent="이 디렉터리 모든 파일의 기본";
+    rm.style.display="none";
+  }else{
+    const v=cfgFile||{agent:"",prompt:""};
+    a.value=v.agent; p.value=v.prompt;
+    a.placeholder="(빈칸 = 디렉터리 기본 사용)";
+    p.placeholder="이 파일 전용 프롬프트 — 저장하면 디렉터리 기본을 덮습니다. 둘 다 빈칸으로 저장 = 오버라이드 제거";
+    note.textContent=cfgFile?"오버라이드 적용 중":"오버라이드 없음 (저장하면 생성)";
+    rm.style.display=cfgFile?"inline-block":"none";
+  }
+}
 async function openSettings(){
   const r=await fetch("/api/config"+FQ); const c=await r.json();
-  document.getElementById("cfg-agent").value=c.agent||"";
-  document.getElementById("cfg-workspace").value=c.workspace||"";
-  document.getElementById("cfg-prompt").value=c.prompt_template||"";
   cfgDefault=c.default_prompt||"";
-  const rm=document.getElementById("cfg-remove-over");
-  rm.style.display=c.has_file_override?"inline-block":"none";
-  document.querySelector('input[name="cfg-scope"][value="'+(c.has_file_override?"file":"dir")+'"]').checked=true;
-  document.getElementById("cfg-note").textContent=c.overridden_by_cli?"주의: --term-cmd CLI 오버라이드가 켜져 있어 설정이 무시됩니다":(c.has_file_override?"이 파일 전용 프롬프트 적용 중":"");
+  cfgDir={agent:(c.dir&&c.dir.agent)||"", prompt:(c.dir&&c.dir.prompt_template)||""};
+  cfgFile=c.file_override?{agent:c.file_override.agent||"",prompt:c.file_override.prompt_template||""}:null;
+  document.getElementById("cfg-workspace").value=c.workspace||"";
+  document.getElementById("cfg-note").textContent=c.overridden_by_cli?"주의: --term-cmd CLI 오버라이드가 켜져 있어 설정이 무시됩니다":"";
+  showScope(c.file_override?"file":"dir");
   settings.classList.add("open");
 }
 document.getElementById("settingsbtn").onclick=openSettings;
-settings.addEventListener("click",e=>{ if(e.target===settings) settings.classList.remove("open"); });
+document.getElementById("scope-dir").onclick=()=>{ stashScope(); showScope("dir"); };
+document.getElementById("scope-file").onclick=()=>{ stashScope(); showScope("file"); };
 document.getElementById("cfg-cancel").onclick=()=>settings.classList.remove("open");
 document.getElementById("cfg-default").onclick=()=>{document.getElementById("cfg-prompt").value=cfgDefault;};
 document.getElementById("cfg-remove-over").onclick=async()=>{
   await fetch("/api/config",{method:"POST",headers:{"Content-Type":"application/json"},
     body:JSON.stringify({file:FILE||null,remove_file_override:true})});
-  openSettings();};
+  cfgFile=null; showScope("file");};
 document.getElementById("cfg-save").onclick=async()=>{
   await fetch("/api/config",{method:"POST",headers:{"Content-Type":"application/json"},
     body:JSON.stringify({file:FILE||null,
-                         scope:document.querySelector('input[name="cfg-scope"]:checked').value,
+                         scope:curScope,
                          agent:document.getElementById("cfg-agent").value,
                          workspace:document.getElementById("cfg-workspace").value,
                          prompt_template:document.getElementById("cfg-prompt").value})});
