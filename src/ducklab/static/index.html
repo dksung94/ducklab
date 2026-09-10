@@ -257,7 +257,14 @@ settings.innerHTML=`<div class="panel">
   <input type="text" id="cfg-agent" placeholder="claude">
   <label>Default workspace — 인자 없이 <code>ducklab</code> 실행 시 열 디렉터리 (다음 실행부터)</label>
   <input type="text" id="cfg-workspace" placeholder="~/PycharmProjects/psi">
-  <label>Context prompt — 플레이스홀더 {file} {url} · 빈칸 = 프롬프트 없이 실행</label>
+  <label>Context prompt — 플레이스홀더 {file} {url} {rel} · 빈칸 = 프롬프트 없이 실행</label>
+  <div style="display:flex;gap:14px;align-items:center;font-size:12.5px;margin:2px 0 6px">
+    <label style="display:flex;gap:5px;align-items:center;margin:0;font-weight:400;color:var(--ink)">
+      <input type="radio" name="cfg-scope" value="dir" checked> 디렉터리 기본값</label>
+    <label style="display:flex;gap:5px;align-items:center;margin:0;font-weight:400;color:var(--ink)">
+      <input type="radio" name="cfg-scope" value="file"> 이 파일 전용</label>
+    <button id="cfg-remove-over" style="display:none;font-size:11px;padding:3px 9px">파일 오버라이드 제거</button>
+  </div>
   <textarea id="cfg-prompt"></textarea>
   <div class="row">
     <button id="cfg-default">기본 프롬프트로</button>
@@ -273,16 +280,24 @@ async function openSettings(){
   document.getElementById("cfg-workspace").value=c.workspace||"";
   document.getElementById("cfg-prompt").value=c.prompt_template||"";
   cfgDefault=c.default_prompt||"";
-  document.getElementById("cfg-note").textContent=c.overridden_by_cli?"주의: --term-cmd CLI 오버라이드가 켜져 있어 설정이 무시됩니다":"";
+  const rm=document.getElementById("cfg-remove-over");
+  rm.style.display=c.has_file_override?"inline-block":"none";
+  document.querySelector('input[name="cfg-scope"][value="'+(c.has_file_override?"file":"dir")+'"]').checked=true;
+  document.getElementById("cfg-note").textContent=c.overridden_by_cli?"주의: --term-cmd CLI 오버라이드가 켜져 있어 설정이 무시됩니다":(c.has_file_override?"이 파일 전용 프롬프트 적용 중":"");
   settings.classList.add("open");
 }
 document.getElementById("settingsbtn").onclick=openSettings;
 settings.addEventListener("click",e=>{ if(e.target===settings) settings.classList.remove("open"); });
 document.getElementById("cfg-cancel").onclick=()=>settings.classList.remove("open");
 document.getElementById("cfg-default").onclick=()=>{document.getElementById("cfg-prompt").value=cfgDefault;};
+document.getElementById("cfg-remove-over").onclick=async()=>{
+  await fetch("/api/config",{method:"POST",headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({file:FILE||null,remove_file_override:true})});
+  openSettings();};
 document.getElementById("cfg-save").onclick=async()=>{
   await fetch("/api/config",{method:"POST",headers:{"Content-Type":"application/json"},
     body:JSON.stringify({file:FILE||null,
+                         scope:document.querySelector('input[name="cfg-scope"]:checked').value,
                          agent:document.getElementById("cfg-agent").value,
                          workspace:document.getElementById("cfg-workspace").value,
                          prompt_template:document.getElementById("cfg-prompt").value})});

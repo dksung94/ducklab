@@ -34,3 +34,10 @@ plt.title("weekly fruit sales")
 plt.ylabel("units")
 plt.tight_layout()
 plt.show()
+
+# %% sales summary
+# uses `fruits` and `sales` from the bar chart cell (kernel state persists)
+ranked = sorted(zip(fruits, sales), key=lambda p: p[1], reverse=True)
+for name, n in ranked:
+    print(f"{name:<8} {n:>4}  {'#' * (n // 5)}")
+print(f"\ntotal {sales.sum()}, top seller: {ranked[0][0]}")

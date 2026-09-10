@@ -48,7 +48,9 @@ DEFAULT_PROMPT = (
     "run one (blocks, returns outputs): curl -s -XPOST '{url}/api/run/<idx>?file={rel}' ; "
     "run all: curl -s -XPOST '{url}/api/run_all?file={rel}' ; "
     "read last outputs: curl -s '{url}/api/outputs/<idx>?file={rel}' . "
-    "Images render in the browser and appear elided in the API."
+    "Images render in the browser and appear elided in the API. "
+    "Do NOT run cells or edit the file until the human asks — start by "
+    "reading the file and briefly saying what you see."
 )
 
 
@@ -80,6 +82,15 @@ def load_dir_config(dirpath: Path) -> dict:
 
 def save_dir_config(dirpath: Path, cfg: dict) -> None:
     (dirpath / ".ducklab.json").write_text(json.dumps(cfg, indent=2, ensure_ascii=False) + "\n")
+
+
+def effective_config(dirpath: Path, filename: str) -> tuple[dict, bool]:
+    """Directory defaults with a per-file override layered on top.
+    Returns (effective, has_file_override)."""
+    cfg = load_dir_config(dirpath)
+    over = (cfg.get("files") or {}).get(filename) or {}
+    eff = {**cfg, **{k: v for k, v in over.items() if v}}
+    return eff, bool(over)
 
 
 def build_term_cmd(cfg: dict, file: Path, rel: str, host: str, port: int) -> str | None:
@@ -351,20 +362,30 @@ def create_app(root: Path, initial: str | None = None, host: str = "127.0.0.1",
     @app.get("/api/config")
     async def api_config_get(file: str | None = None):
         s = hub.session(file)
-        cfg = load_dir_config(s.file.parent)
+        eff, has_over = effective_config(s.file.parent, s.file.name)
         g = load_global_config()
-        return {**cfg, "default_prompt": DEFAULT_PROMPT,
+        return {"agent": eff.get("agent", ""), "prompt_template": eff.get("prompt_template", ""),
+                "default_prompt": DEFAULT_PROMPT, "has_file_override": has_over,
                 "workspace": g.get("workspace", ""), "root": str(hub.root),
                 "effective_cmd": term_cmd_override if term_cmd_override is not None
-                else build_term_cmd(cfg, s.file, s.rel, host, port),
+                else build_term_cmd(eff, s.file, s.rel, host, port),
                 "overridden_by_cli": term_cmd_override is not None}
 
     @app.post("/api/config")
     async def api_config_set(cfg: dict):
         s = hub.session(cfg.get("file"))
-        save_dir_config(s.file.parent,
-                        {"agent": str(cfg.get("agent", "claude")),
-                         "prompt_template": str(cfg.get("prompt_template", DEFAULT_PROMPT))})
+        cur = load_dir_config(s.file.parent)
+        files = cur.get("files") or {}
+        if cfg.get("remove_file_override"):
+            files.pop(s.file.name, None)
+        elif cfg.get("scope") == "file":
+            files[s.file.name] = {"agent": str(cfg.get("agent", "")),
+                                  "prompt_template": str(cfg.get("prompt_template", ""))}
+        else:  # directory defaults
+            cur["agent"] = str(cfg.get("agent", "claude"))
+            cur["prompt_template"] = str(cfg.get("prompt_template", DEFAULT_PROMPT))
+        cur["files"] = files
+        save_dir_config(s.file.parent, cur)
         if "workspace" in cfg:
             g = load_global_config()
             g["workspace"] = str(cfg["workspace"]).strip()
@@ -438,9 +459,9 @@ def create_app(root: Path, initial: str | None = None, host: str = "127.0.0.1",
         # auto-start the pairing AI (or any command); typed into the shell so
         # it is visible, and the shell remains after it exits. Config is read
         # per-connection, so settings changes apply to the next terminal.
+        eff, _ = effective_config(session.file.parent, session.file.name)
         cmd = term_cmd_override if term_cmd_override is not None else \
-            build_term_cmd(load_dir_config(session.file.parent),
-                           session.file, session.rel, host, port)
+            build_term_cmd(eff, session.file, session.rel, host, port)
         if cmd:
             pty.write(cmd + "\n")
 
