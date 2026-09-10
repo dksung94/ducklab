@@ -6,15 +6,18 @@
 <link rel="stylesheet" href="/static/vendor/cm-dracula.css">
 <style>
 :root{color-scheme:light dark;--bg:#f6f5f1;--card:#ffffff;--ink:#1c1e21;--muted:#6a6f76;--rule:#e3e0d8;
- --accent:#3a5a46;--accent-ink:#fff;--err:#a6392f;--busy:#8a641c;--code:#f0eee8}
+ --accent:#3a5a46;--accent-ink:#fff;--err:#a6392f;--busy:#8a641c;--code:#f0eee8;--ok:#3a8a5e;--stale:#b8860b}
 @media (prefers-color-scheme:dark){:root{--bg:#101211;--card:#181b19;--ink:#e8eae6;--muted:#8b918b;
- --rule:#262a27;--accent:#7fae8f;--accent-ink:#10130f;--err:#e0857d;--busy:#d9b45c;--code:#141614}}
+ --rule:#262a27;--accent:#7fae8f;--accent-ink:#10130f;--err:#e0857d;--busy:#d9b45c;--code:#141614;--ok:#7fae8f;--stale:#d9b45c}}
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--ink);font-family:ui-sans-serif,-apple-system,"Segoe UI",Roboto,sans-serif;font-size:15px;line-height:1.55}
 .top{position:sticky;top:0;z-index:5;display:flex;align-items:center;gap:10px;padding:10px 14px;
  background:var(--bg);border-bottom:1px solid var(--rule)}
-.top .name{font-family:ui-monospace,Menlo,monospace;font-weight:700;font-size:14px;flex:1;
- overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.top .name{font-family:ui-monospace,Menlo,monospace;font-weight:700;font-size:14px;
+ overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:34vw}
+.top .spacer{flex:1}
+.top .status{font-size:11.5px;color:var(--muted);font-family:ui-monospace,Menlo,monospace;white-space:nowrap}
+.top .iconbtn{padding:6px 9px}
 .dot{width:9px;height:9px;border-radius:50%;background:#b33;flex:none}
 .dot.on{background:var(--accent)}
 button{font:inherit;font-size:13px;border:1px solid var(--rule);background:var(--card);color:var(--ink);
@@ -27,7 +30,12 @@ button:active{transform:translateY(1px)}
 .wrap{max-width:880px;margin:0 auto;padding:14px 12px 90px}
 .cell{background:var(--card);border:1px solid var(--rule);border-radius:12px;margin:12px 0;overflow:visible;position:relative}
 .cell.busy{border-color:var(--busy)}
-.cell.sel{border-color:var(--accent);box-shadow:inset 3px 0 0 var(--accent)}
+.cell.ok{box-shadow:inset 3px 0 0 var(--ok)}
+.cell.err{box-shadow:inset 3px 0 0 var(--err)}
+.cell.stale{box-shadow:inset 3px 0 0 var(--stale)}
+.cell.sel{outline:2px solid var(--accent);outline-offset:1px}
+.chead .stalebadge{display:none;font-size:10px;color:var(--stale);border:1px solid var(--stale);border-radius:5px;padding:0 6px;flex:none}
+.cell.stale .stalebadge{display:inline-block}
 #addcell{display:flex;justify-content:center;margin:8px 0 24px}
 #addcell button{display:flex;align-items:center;gap:7px;border:1px dashed var(--rule);background:var(--card);
  color:var(--muted);border-radius:999px;padding:8px 18px;font-size:13px;transition:all .14s}
@@ -62,6 +70,9 @@ kbd{font:11.5px ui-monospace,Menlo,monospace;background:var(--code);border:1px s
 .chead .t .ln{color:var(--faint,#999);font-weight:400}
 .chead button{padding:3px 11px;font-size:12px;opacity:.85}
 .chead button:hover{opacity:1}
+.chead .actions{display:flex;gap:8px;opacity:0;transition:opacity .12s}
+.cell:hover .actions,.cell.sel .actions,.cell.editing .actions{opacity:1}
+@media(hover:none){.chead .actions{opacity:1}}
 .cellmenu{position:absolute;right:10px;top:38px;z-index:6;background:var(--card);border:1px solid var(--rule);
  border-radius:10px;box-shadow:0 8px 26px rgba(0,0,0,.28);padding:5px;min-width:150px;display:none}
 .cellmenu.open{display:block}
@@ -70,12 +81,16 @@ kbd{font:11.5px ui-monospace,Menlo,monospace;background:var(--code);border:1px s
 .cellmenu button:hover{background:var(--code)}
 .cellmenu button.danger{color:var(--err)}
 .cellmenu .sep{height:1px;background:var(--rule);margin:4px 2px}
+#topmenu{position:absolute;right:96px;top:46px;z-index:16;background:var(--card);border:1px solid var(--rule);
+ border-radius:10px;box-shadow:0 8px 26px rgba(0,0,0,.28);padding:5px;min-width:180px;display:none}
+#topmenu.open{display:block}
+#topmenu button{display:flex;width:100%;justify-content:flex-start;border:0;border-radius:7px;padding:8px 11px;font-size:12.5px;background:transparent}
+#topmenu button:hover{background:var(--code)}
 .chead .saved{font-size:11px;color:var(--accent);opacity:0;transition:opacity .15s;flex:none;
  font-weight:600;pointer-events:none}
 .chead .saved.on{opacity:1}
 .chead .runbadge{font-size:10.5px;color:var(--muted);font-family:ui-monospace,Menlo,monospace;flex:none}
-#memchip{font-size:11px;color:var(--muted);font-family:ui-monospace,Menlo,monospace;white-space:nowrap;
- border:1px solid var(--rule);border-radius:999px;padding:3px 10px;display:none}
+#memchip{font-size:11.5px;color:var(--muted);font-family:ui-monospace,Menlo,monospace;white-space:nowrap;display:none}
 #memchip.on{display:inline-block}
 #runbar{position:fixed;top:0;left:0;height:3px;background:var(--accent);width:0;z-index:30;
  transition:width .25s ease;box-shadow:0 0 8px var(--accent);display:none}
@@ -83,8 +98,12 @@ kbd{font:11.5px ui-monospace,Menlo,monospace;background:var(--code);border:1px s
 #toast .act{margin-left:12px;color:var(--accent);cursor:pointer;text-decoration:underline;font-weight:600}
 pre.code{margin:0;padding:12px 14px;background:var(--code);font-family:ui-monospace,"SF Mono",Menlo,monospace;
  font-size:12.5px;line-height:1.5;overflow-x:auto;white-space:pre;-webkit-overflow-scrolling:touch}
-.out{padding:8px 14px 12px;display:none;border-top:1px dashed var(--rule)}
+.out{padding:8px 14px 12px;display:none;border-top:1px dashed var(--rule);max-height:360px;overflow:auto}
 .out.has{display:block}
+.out.expanded{max-height:none}
+.outbar{display:none;justify-content:flex-end;gap:6px;padding:4px 12px 0}
+.outbar.has{display:flex}
+.outbar button{font-size:11px;padding:2px 9px;color:var(--muted)}
 .out pre{margin:6px 0;font-family:ui-monospace,Menlo,monospace;font-size:12px;line-height:1.5;
  white-space:pre-wrap;word-break:break-word;overflow-x:auto}
 .out pre.err{color:var(--err);border-left:3px solid var(--err);padding-left:10px}
@@ -98,7 +117,8 @@ pre.code{margin:0;padding:12px 14px;background:var(--code);font-family:ui-monosp
 .askbar input:focus{outline:2px solid var(--accent);outline-offset:-1px}
 .askbar button{flex:none;padding:6px 13px;font-size:12.5px}
 .askbar .hint{flex:none;font-size:10.5px;color:var(--faint)}
-#envchip{font-family:ui-monospace,Menlo,monospace;font-size:11.5px;padding:4px 10px}
+#envchip{font-family:ui-monospace,Menlo,monospace;font-size:11.5px;padding:4px 10px;background:transparent;border-color:transparent;color:var(--muted)}
+#envchip:hover{background:var(--code);border-color:var(--rule)}
 #envmodal{position:fixed;inset:0;z-index:22;display:none;align-items:center;justify-content:center;background:rgba(0,0,0,.45)}
 #envmodal.open{display:flex}
 #envmodal .panel{background:var(--card);border:1px solid var(--rule);border-radius:14px;width:min(560px,94vw);
@@ -119,7 +139,11 @@ pre.code{margin:0;padding:12px 14px;background:var(--code);font-family:ui-monosp
  font-size:13px;padding:8px 16px;border-radius:9px;opacity:0;transition:opacity .2s;pointer-events:none}
 #toast.on{opacity:.92}
 @media (prefers-color-scheme:dark){pre.code.cm-s-dracula{background:#282a36}}
-@media(max-width:600px){body{font-size:14px}.wrap{padding:10px 8px 80px}pre.code{font-size:11.5px}}
+@media(max-width:600px){body{font-size:14px}.wrap{padding:10px 8px 80px}pre.code{font-size:11.5px}
+ .top{flex-wrap:wrap;row-gap:8px}
+ .top .spacer{flex-basis:100%;height:0}
+ .top .name{max-width:60vw}
+ #memchip{display:none}}
 .CodeMirror{height:auto;background:var(--code);color:var(--ink);font-family:ui-monospace,Menlo,monospace;font-size:12.5px;line-height:1.5}
 .CodeMirror-gutters{background:var(--code);border-right:1px solid var(--rule)}
 .CodeMirror-linenumber{color:var(--muted)}
@@ -205,17 +229,21 @@ body.termopen-bottom .wrap{padding-bottom:calc(var(--termh,42vh) + 60px)}
 body.termopen-right{padding-right:var(--termw,40vw)}
 </style></head><body>
 <div class="top">
-  <button id="filesbtn" title="files">☰</button>
+  <button id="filesbtn" class="iconbtn" title="files">☰</button>
   <div class="dot" id="dot"></div>
   <div class="name" id="fname">ducklab</div>
-  <button id="runall" class="primary">Run All</button>
-  <button id="restart">Restart</button>
-  <button id="clearall" title="Clear all outputs">Clear outputs</button>
-  <span id="memchip"></span>
   <button id="envchip" title="python environment">env</button>
+  <span id="memchip"></span>
+  <span class="spacer"></span>
+  <button id="runall" class="primary">Run All</button>
   <button id="termtoggle">Terminal</button>
-  <button id="helpbtn" title="Shortcuts (?)">?</button>
-  <button id="settingsbtn" title="settings">⚙</button>
+  <button id="topmenubtn" class="iconbtn" title="More">⋯</button>
+  <button id="helpbtn" class="iconbtn" title="Shortcuts (?)">?</button>
+  <button id="settingsbtn" class="iconbtn" title="settings">⚙</button>
+  <div id="topmenu">
+    <button data-top="restart">↻ Restart kernel</button>
+    <button data-top="clearall">⌫ Clear all outputs</button>
+  </div>
 </div>
 <div id="runbar"></div>
 <div class="wrap" id="cells"></div>
@@ -282,11 +310,13 @@ function handle(m){
       // queued shows only until the run actually starts; busy/idle both end it
       el.classList.toggle("queued", m.state==="queued");
       if(m.state==="busy"){ busyStart[m.cell] = Date.now(); tickBusy();
+        el.classList.remove("ok","err","stale");
         if(runAll.active){ el.scrollIntoView({block:"center"}); } }
       else delete busyStart[m.cell];
       if(m.state==="idle"){
         const rb=el.querySelector(".runbadge");
         if(rb && m.elapsed!=null) rb.textContent = m.elapsed<1 ? Math.round(m.elapsed*1000)+"ms" : m.elapsed+"s";
+        if(m.status){ el.classList.remove("stale"); el.classList.toggle("ok", m.status==="ok"); el.classList.toggle("err", m.status==="error"); }
         if(m.mem!=null){ const c=document.getElementById("memchip"); c.textContent="🧠 "+m.mem+"MB"; c.classList.add("on"); }
         if(runAll.active){ runAll.done++; updateRunbar(); }
       }
@@ -342,11 +372,14 @@ function render(cells){
     d.className = "cell"; d.id = "cell-"+c.id;
     d.innerHTML = `
       <div class="chead"><span class="idx">${c.idx}</span><span class="runbadge"></span><span class="t">${c.title||('<span class="ln">L'+c.lineno+"</span>")}</span>
+        <span class="stalebadge" title="edited since last run">edited</span>
         <span class="saved">✓ saved</span>
-        <button data-ask="${c.id}" title="Ask the AI about this cell">AI</button>
-        <button data-edit="${c.id}">Edit</button>
-        <button data-run="${c.id}">Run</button>
-        <button data-menu="${c.id}" title="More">⋯</button></div>
+        <span class="actions">
+          <button data-ask="${c.id}" title="Ask the AI about this cell">AI</button>
+          <button data-edit="${c.id}">Edit</button>
+          <button data-run="${c.id}">Run</button>
+          <button data-menu="${c.id}" title="More">⋯</button>
+        </span></div>
       <div class="cellmenu">
         <button data-op="insert-above">↑ Insert above</button>
         <button data-op="insert-below">↓ Insert below</button>
@@ -375,6 +408,7 @@ function render(cells){
       <div class="spin">running… <span class="elapsed"></span>
         <button class="stopbtn" data-stop="${c.id}" title="SIGINT the kernel — the running cell stops with KeyboardInterrupt">■ stop</button></div>
       <div class="qspin">queued… (starts when the cell ahead finishes)</div>
+      <div class="outbar" id="outbar-${c.id}"><button data-copy="${c.id}">copy</button><button data-expand="${c.id}">expand</button></div>
       <div class="out" id="out-${c.id}"></div>`;
     const pc = d.querySelector("pre.code"); pc.dataset.src = c.source; paintCode(pc, c.source);
     d.querySelector("[data-run]").onclick = () => send({type:"run", cell:c.id});
@@ -398,6 +432,15 @@ function render(cells){
       if(!wasOpen) menu.classList.add("open"); };
     menu.querySelectorAll("[data-op]").forEach(bt=>bt.onclick=(ev)=>{
       ev.stopPropagation(); menu.classList.remove("open"); cellOp(bt.dataset.op, c); });
+    if(c.status==="ok") d.classList.add("ok");
+    else if(c.status==="error") d.classList.add("err");
+    if(c.stale) d.classList.add("stale");
+    d.querySelector("[data-copy]").onclick=(ev)=>{ ev.stopPropagation();
+      const txt=(outputs[c.id]||[]).filter(o=>o.kind!=="image").map(o=>o.data).join("");
+      navigator.clipboard && navigator.clipboard.writeText(txt); showToast("Output copied"); };
+    d.querySelector("[data-expand]").onclick=(ev)=>{ ev.stopPropagation();
+      const out=d.querySelector(".out"); const on=out.classList.toggle("expanded");
+      ev.target.textContent=on?"collapse":"expand"; };
     $cells.appendChild(d);
     paintOut(c.id);
   }
@@ -413,6 +456,7 @@ function paintOut(id){
   if(!box) return;
   const outs = outputs[id] || [];
   box.classList.toggle("has", outs.length>0);
+  const bar=document.getElementById("outbar-"+id); if(bar) bar.classList.toggle("has", outs.length>0);
   box.innerHTML = "";
   let textBuf = null;
   const flush = () => { if(textBuf){ const p=document.createElement("pre"); p.textContent=textBuf.join(""); box.appendChild(p); textBuf=null; } };
@@ -521,8 +565,14 @@ function cellOp(op, c){
 }
 document.addEventListener("click",()=>document.querySelectorAll(".cellmenu.open").forEach(x=>x.classList.remove("open")));
 document.getElementById("runall").onclick = () => send({type:"run_all"});
-document.getElementById("restart").onclick = () => { if(confirm("Restart kernel? All state is lost.")) send({type:"restart"}); };
-document.getElementById("clearall").onclick = () => { send({type:"clear_all"}); showToast("All outputs cleared","Undo",()=>send({type:"undo"})); };
+const topmenu=document.getElementById("topmenu");
+document.getElementById("topmenubtn").onclick=(ev)=>{ ev.stopPropagation(); topmenu.classList.toggle("open"); };
+topmenu.querySelectorAll("[data-top]").forEach(b=>b.onclick=()=>{
+  topmenu.classList.remove("open");
+  if(b.dataset.top==="restart"){ if(confirm("Restart kernel? All state is lost.")) send({type:"restart"}); }
+  else { send({type:"clear_all"}); showToast("All outputs cleared","Undo",()=>send({type:"undo"})); }
+});
+document.addEventListener("click",()=>topmenu.classList.remove("open"));
 async function pollMem(){
   try{
     const d=await (await fetch("/api/kernels")).json();

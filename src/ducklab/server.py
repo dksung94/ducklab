@@ -237,6 +237,8 @@ class Session:
         self.loop: asyncio.AbstractEventLoop | None = None
         self.last_run_at: float | None = None
         self.run_count = 0
+        self.run_status: dict[str, str] = {}   # cell id -> "ok" | "error"
+        self.ran_source: dict[str, str] = {}   # cell id -> source at last run
         # one worker thread per session: runs are FIFO-ordered and the kernel
         # is only ever created/used from this thread (no creation race)
         self.executor = ThreadPoolExecutor(max_workers=1)
@@ -276,10 +278,15 @@ class Session:
         self.send_threadsafe({"type": "clear", "cell": cell_id})
         self.send_threadsafe({"type": "status", "state": "busy", "cell": cell_id})
 
+        errored = {"v": False}
+
         def on_output(out: dict):
+            if out.get("kind") == "error":
+                errored["v"] = True
             self.outputs.setdefault(cell_id, []).append(out)
             self.send_threadsafe({"type": "output", "cell": cell_id, "out": out})
 
+        self.ran_source[cell_id] = cell.source
         self.last_run_at = time.time()
         self.run_count += 1
         t0 = time.time()
@@ -288,14 +295,18 @@ class Session:
         except Exception as e:  # surface infra failures as a cell error, never swallow
             on_output({"kind": "error", "data": f"[ducklab] {type(e).__name__}: {e}"})
         finally:
+            self.run_status[cell_id] = "error" if errored["v"] else "ok"
             self.send_threadsafe({"type": "status", "state": "idle", "cell": cell_id,
                                   "elapsed": round(time.time() - t0, 2),
+                                  "status": self.run_status[cell_id],
                                   "mem": rss_mb(self.kernel.pid if self.kernel else None)})
 
     def reparse(self):
         self.cells = parse_cells(self.file.read_text())
         live = {c.id for c in self.cells}
         self.outputs = {k: v for k, v in self.outputs.items() if k in live}
+        self.run_status = {k: v for k, v in self.run_status.items() if k in live}
+        self.ran_source = {k: v for k, v in self.ran_source.items() if k in live}
 
     def find_cell(self, ref: str):
         for c in self.cells:
@@ -318,7 +329,10 @@ class Session:
         return {"type": "cells", "file": self.rel,
                 "cells": [{"id": c.id, "idx": c.idx, "title": c.title,
                            "source": c.source, "lineno": c.lineno,
-                           "marker": c.marker_line >= 0} for c in self.cells]}
+                           "marker": c.marker_line >= 0,
+                           "status": self.run_status.get(c.id),
+                           "stale": c.id in self.ran_source and self.ran_source[c.id] != c.source}
+                          for c in self.cells]}
 
     def shutdown(self):
         if self.kernel:
