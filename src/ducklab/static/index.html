@@ -210,7 +210,7 @@ function saveEditor(id, run){
 
 // ---- files drawer ----
 const drawer=document.createElement("div"); drawer.id="drawer";
-drawer.innerHTML='<div class="dhead">workspace<br><b id="droot"></b></div><div class="dlist" id="dlist"></div><div class="khead">kernels</div><div id="klist" style="padding-bottom:10px"></div>';
+drawer.innerHTML='<div class="dhead">workspace<br><b id="droot"></b><div style="margin-top:8px"><button id="newfile" style="font-size:12px;padding:4px 10px">＋ 새 파일</button></div></div><div class="dlist" id="dlist"></div><div class="khead">kernels</div><div id="klist" style="padding-bottom:10px"></div>';
 const scrim=document.createElement("div"); scrim.id="scrim";
 document.body.appendChild(scrim); document.body.appendChild(drawer);
 async function openDrawer(){
@@ -245,6 +245,16 @@ async function paintKernels(){
 }
 function closeDrawer(){ drawer.classList.remove("open"); scrim.classList.remove("open"); }
 document.getElementById("filesbtn").onclick=openDrawer;
+drawer.addEventListener("click",async(e)=>{
+  if(e.target.id!=="newfile") return;
+  const name=prompt("새 파일 경로 (workspace 기준, 예: analysis/momentum.py)");
+  if(!name) return;
+  const r=await fetch("/api/files/new",{method:"POST",headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({name})});
+  const d=await r.json();
+  if(!d.ok){ alert(d.error); return; }
+  location="/?file="+encodeURIComponent(d.file);
+});
 scrim.onclick=closeDrawer;
 
 // ---- settings modal ----

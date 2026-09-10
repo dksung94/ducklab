@@ -279,6 +279,20 @@ def create_app(root: Path, initial: str | None = None, host: str = "127.0.0.1",
         return {"root": str(hub.root), "files": hub.list_files(),
                 "open": sorted(hub.sessions)}
 
+    @app.post("/api/files/new")
+    async def api_file_new(body: dict):
+        name = str(body.get("name", "")).strip()
+        if not name.endswith(".py"):
+            name += ".py"
+        p = (hub.root / name).resolve()
+        if not p.is_relative_to(hub.root):
+            return {"ok": False, "error": "path escapes workspace"}
+        if p.exists():
+            return {"ok": False, "error": f"{name} already exists"}
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(f"# %% {p.stem}\n\n")
+        return {"ok": True, "file": str(p.relative_to(hub.root))}
+
     @app.get("/api/cells")
     async def api_cells(file: str | None = None):
         s = hub.session(file)
@@ -381,9 +395,16 @@ def create_app(root: Path, initial: str | None = None, host: str = "127.0.0.1",
         elif cfg.get("scope") == "file":
             files[s.file.name] = {"agent": str(cfg.get("agent", "")),
                                   "prompt_template": str(cfg.get("prompt_template", ""))}
-        else:  # directory defaults
-            cur["agent"] = str(cfg.get("agent", "claude"))
-            cur["prompt_template"] = str(cfg.get("prompt_template", DEFAULT_PROMPT))
+        else:  # directory defaults — omit values equal to the built-in defaults
+            # so a later ducklab upgrade of DEFAULT_PROMPT flows through instead
+            # of being frozen by an old save
+            agent = str(cfg.get("agent", "claude"))
+            prompt = str(cfg.get("prompt_template", DEFAULT_PROMPT))
+            cur.pop("agent", None); cur.pop("prompt_template", None)
+            if agent and agent != "claude":
+                cur["agent"] = agent
+            if prompt.strip() and prompt != DEFAULT_PROMPT:
+                cur["prompt_template"] = prompt
         cur["files"] = files
         save_dir_config(s.file.parent, cur)
         if "workspace" in cfg:
