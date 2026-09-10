@@ -24,6 +24,8 @@ button:active{transform:translateY(1px)}
 .wrap{max-width:880px;margin:0 auto;padding:14px 12px 90px}
 .cell{background:var(--card);border:1px solid var(--rule);border-radius:12px;margin:12px 0;overflow:hidden}
 .cell.busy{border-color:var(--busy)}
+@keyframes cellflash{0%{border-color:var(--accent);box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 35%,transparent)}100%{border-color:var(--rule);box-shadow:none}}
+.cell.flash{animation:cellflash 1.6s ease-out}
 .chead{display:flex;align-items:center;gap:8px;padding:7px 12px;border-bottom:1px solid var(--rule)}
 .chead .t{font-size:12px;color:var(--muted);flex:1;font-family:ui-monospace,Menlo,monospace;
  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -108,6 +110,7 @@ body.termopen-right{padding-right:var(--termw,40vw)}
 const FILE = new URLSearchParams(location.search).get("file") || "";
 const FQ = FILE ? "?file="+encodeURIComponent(FILE) : "";
 let ws, outputs = {};   // cell id -> [out]
+let prevIds = null;      // cell ids from the previous render (null = first)
 const $cells = document.getElementById("cells");
 const $dot = document.getElementById("dot");
 
@@ -125,7 +128,15 @@ function handle(m){
     document.title = "ducklab · " + m.file;
     const live = new Set(m.cells.map(c=>c.id));
     for(const k of Object.keys(outputs)) if(!live.has(k)) delete outputs[k];
+    const fresh = prevIds ? m.cells.filter(c=>!prevIds.has(c.id)) : [];
     render(m.cells);
+    // the AI (or anyone) added/changed a cell: bring the last new one into view
+    if(prevIds && fresh.length && Object.keys(editors).length===0){
+      const el=document.getElementById("cell-"+fresh[fresh.length-1].id);
+      if(el){ el.scrollIntoView({behavior:"smooth", block:"center"}); el.classList.add("flash");
+              setTimeout(()=>el.classList.remove("flash"), 1700); }
+    }
+    prevIds = live;
   } else if(m.type==="output"){
     (outputs[m.cell] = outputs[m.cell] || []).push(m.out);
     paintOut(m.cell);

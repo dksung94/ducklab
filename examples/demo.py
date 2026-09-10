@@ -41,3 +41,12 @@ ranked = sorted(zip(fruits, sales), key=lambda p: p[1], reverse=True)
 for name, n in ranked:
     print(f"{name:<8} {n:>4}  {'#' * (n // 5)}")
 print(f"\ntotal {sales.sum()}, top seller: {ranked[0][0]}")
+
+# %% pie chart
+# share of weekly sales per fruit (reuses `fruits` and `sales`)
+plt.figure(figsize=(4.5, 4.5))
+plt.pie(sales, labels=fruits, autopct="%1.0f%%", startangle=90,
+        colors=["#4C78A8", "#F58518", "#E45756", "#72B7B2", "#54A24B"])
+plt.title("weekly fruit sales share")
+plt.tight_layout()
+plt.show()
