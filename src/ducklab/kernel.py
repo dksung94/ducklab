@@ -35,6 +35,7 @@ def _strip_ansi(s: str) -> str:
 @dataclass
 class FileKernel:
     python: str = field(default_factory=lambda: sys.executable)
+    cwd: str | None = None   # start the kernel in the file's directory
 
     def __post_init__(self):
         if self.python != sys.executable:
@@ -57,7 +58,7 @@ class FileKernel:
         self.km._kernel_spec = KernelSpec(
             argv=[self.python, "-m", "ipykernel_launcher", "-f", "{connection_file}"],
             display_name="ducklab", language="python")
-        self.km.start_kernel()
+        self.km.start_kernel(cwd=self.cwd) if self.cwd else self.km.start_kernel()
         self.kc = self.km.client()
         self.kc.start_channels()
         self.kc.wait_for_ready(timeout=60)

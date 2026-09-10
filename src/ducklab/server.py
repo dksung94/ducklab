@@ -260,7 +260,8 @@ class Session:
 
     def ensure_kernel(self) -> FileKernel:
         if self.kernel is None:
-            self.kernel = FileKernel(self.python) if self.python else FileKernel()
+            cwd = str(self.file.parent)
+            self.kernel = FileKernel(self.python, cwd=cwd) if self.python else FileKernel(cwd=cwd)
         return self.kernel
 
     def submit_run(self, cell_id: str):
