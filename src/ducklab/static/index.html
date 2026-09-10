@@ -27,6 +27,18 @@ button:active{transform:translateY(1px)}
 .wrap{max-width:880px;margin:0 auto;padding:14px 12px 90px}
 .cell{background:var(--card);border:1px solid var(--rule);border-radius:12px;margin:12px 0;overflow:hidden}
 .cell.busy{border-color:var(--busy)}
+.cell.sel{border-color:var(--accent);box-shadow:inset 3px 0 0 var(--accent)}
+.cell.sel .chead{background:color-mix(in srgb,var(--accent) 7%,transparent)}
+#help{position:fixed;inset:0;z-index:25;display:none;align-items:center;justify-content:center;background:rgba(0,0,0,.5)}
+#help.open{display:flex}
+#help .card{background:var(--card);border:1px solid var(--rule);border-radius:14px;padding:20px 22px;width:min(520px,92vw);max-height:84vh;overflow:auto}
+#help h3{margin:0 0 12px;font-size:16px}
+#help table{width:100%;border-collapse:collapse;font-size:13px}
+#help td{padding:5px 6px;border-bottom:1px solid var(--rule);vertical-align:top}
+#help td:first-child{white-space:nowrap;width:1%}
+#help .grp{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);padding-top:14px}
+kbd{font:11.5px ui-monospace,Menlo,monospace;background:var(--code);border:1px solid var(--rule);
+ border-bottom-width:2px;border-radius:6px;padding:1px 7px;color:var(--ink)}
 .cell.queued{border-color:var(--muted)}
 .qspin{font-size:11px;color:var(--muted);padding:0 12px 8px;display:none}
 .cell.queued .qspin{display:block}
@@ -169,6 +181,7 @@ body.termopen-right{padding-right:var(--termw,40vw)}
   <button id="restart">Restart</button>
   <button id="envchip" title="python environment">env</button>
   <button id="termtoggle">Terminal</button>
+  <button id="helpbtn" title="단축키 (?)">?</button>
   <button id="settingsbtn" title="settings">⚙</button>
 </div>
 <div class="wrap" id="cells"></div>
@@ -177,6 +190,9 @@ const FILE = new URLSearchParams(location.search).get("file") || "";
 const FQ = FILE ? "?file="+encodeURIComponent(FILE) : "";
 let ws, outputs = {};   // cell id -> [out]
 let prevIds = null;      // cell ids from the previous render (null = first)
+let cellOrder = [];      // cell ids in document order
+let cellData = {};       // id -> cell
+let selId = null;        // command-mode selected cell
 const $cells = document.getElementById("cells");
 const $dot = document.getElementById("dot");
 
@@ -202,6 +218,12 @@ function handle(m){
       if(el){ el.scrollIntoView({behavior:"smooth", block:"center"}); el.classList.add("flash");
               setTimeout(()=>el.classList.remove("flash"), 1700); }
     }
+    cellOrder = m.cells.map(c=>c.id);
+    cellData = Object.fromEntries(m.cells.map(c=>[c.id,c]));
+    // follow a freshly inserted cell; else keep selection, else default to first
+    if(prevIds && fresh.length && Object.keys(editors).length===0) selId = fresh[fresh.length-1].id;
+    if(!cellOrder.includes(selId)) selId = cellOrder[0] || null;
+    applySel();
     prevIds = live;
   } else if(m.type==="output"){
     (outputs[m.cell] = outputs[m.cell] || []).push(m.out);
@@ -292,9 +314,11 @@ function render(cells){
     d.querySelector("[data-save]").onclick = () => saveEditor(c.id, false);
     d.querySelector("[data-saverun]").onclick = () => saveEditor(c.id, true);
     d.querySelector("[data-cancel]").onclick = () => closeEditor(c.id);
+    d.addEventListener("mousedown",(ev)=>{ if(!ev.target.closest(".CodeMirror")) selectCell(c.id, false); });
     $cells.appendChild(d);
     paintOut(c.id);
   }
+  applySel();
 }
 
 function paintOut(id){
@@ -314,6 +338,78 @@ function paintOut(id){
   flush();
 }
 
+// ---- command-mode selection + Jupyter-style shortcuts ----
+function applySel(){
+  document.querySelectorAll(".cell.sel").forEach(el=>el.classList.remove("sel"));
+  if(selId){ const el=document.getElementById("cell-"+selId); if(el) el.classList.add("sel"); }
+}
+function selectCell(id, scroll=true){
+  if(!id) return; selId=id; applySel();
+  if(scroll){ const el=document.getElementById("cell-"+id); if(el) el.scrollIntoView({block:"nearest"}); }
+}
+function selectRel(delta){
+  if(!cellOrder.length) return;
+  let i = cellOrder.indexOf(selId);
+  if(i<0) i = 0; else i = Math.max(0, Math.min(cellOrder.length-1, i+delta));
+  selectCell(cellOrder[i]);
+}
+function typingContext(){
+  const a=document.activeElement;
+  if(a){ const t=a.tagName;
+    if(t==="INPUT"||t==="TEXTAREA") return true;
+    if(a.closest && (a.closest(".CodeMirror")||a.closest("#termwrap"))) return true; }
+  // any editor open counts as edit-mode
+  if(Object.keys(editors).length) return true;
+  return false;
+}
+function modalOpen(){
+  return ["settings","envmodal","drawer","help"].some(id=>{
+    const el=document.getElementById(id); return el && el.classList.contains("open"); });
+}
+let lastD=0;
+document.addEventListener("keydown",(e)=>{
+  // help toggle works anywhere except while typing
+  if(e.key==="?" && !typingContext()){ e.preventDefault(); toggleHelp(); return; }
+  if(e.key==="Escape"){ if(document.getElementById("help").classList.contains("open")){ toggleHelp(false); return; } }
+  if(typingContext() || modalOpen()) return;      // edit mode / modal: let inputs handle keys
+  if(!selId && cellOrder.length) selId=cellOrder[0];
+  const mod = e.metaKey || e.ctrlKey;
+  if(e.key==="Enter" && e.shiftKey){ e.preventDefault(); send({type:"run",cell:selId}); selectRel(1); }
+  else if(e.key==="Enter" && mod){ e.preventDefault(); send({type:"run",cell:selId}); }
+  else if(e.key==="Enter"){ e.preventDefault(); if(cellData[selId]) openEditor(cellData[selId]); }
+  else if(e.key==="j"||e.key==="ArrowDown"){ e.preventDefault(); selectRel(1); }
+  else if(e.key==="k"||e.key==="ArrowUp"){ e.preventDefault(); selectRel(-1); }
+  else if(e.key==="a"){ e.preventDefault(); send({type:"insert",cell:selId,where:"above"}); }
+  else if(e.key==="b"){ e.preventDefault(); send({type:"insert",cell:selId,where:"below"}); }
+  else if(e.key==="d"){ const now=Date.now(); if(now-lastD<500){ lastD=0;
+      if(cellData[selId] && confirm(`셀 [${cellData[selId].idx}] 삭제?`)) send({type:"delete",cell:selId}); }
+      else lastD=now; }
+  else if(e.key==="i"){ /* reserved */ }
+});
+
+// ---- shortcuts help overlay ----
+const help=document.createElement("div"); help.id="help";
+help.innerHTML=`<div class="card"><h3>키보드 단축키</h3><table>
+  <tr><td class="grp" colspan=2>명령 모드 (셀 선택 상태 · 편집 아님)</td></tr>
+  <tr><td><kbd>j</kbd> / <kbd>↓</kbd>, <kbd>k</kbd> / <kbd>↑</kbd></td><td>다음/이전 셀 선택</td></tr>
+  <tr><td><kbd>Enter</kbd></td><td>선택 셀 편집</td></tr>
+  <tr><td><kbd>Shift</kbd>+<kbd>Enter</kbd></td><td>실행 후 다음 셀 선택</td></tr>
+  <tr><td><kbd>⌘</kbd>/<kbd>Ctrl</kbd>+<kbd>Enter</kbd></td><td>제자리 실행</td></tr>
+  <tr><td><kbd>a</kbd> / <kbd>b</kbd></td><td>위/아래에 셀 삽입</td></tr>
+  <tr><td><kbd>d</kbd> <kbd>d</kbd></td><td>셀 삭제 (연속 2번)</td></tr>
+  <tr><td class="grp" colspan=2>편집 모드 (셀 안에서 타이핑)</td></tr>
+  <tr><td><kbd>⌘</kbd>/<kbd>Ctrl</kbd>+<kbd>Enter</kbd></td><td>저장 후 실행</td></tr>
+  <tr><td><kbd>Shift</kbd>+<kbd>Enter</kbd></td><td>저장·실행 후 다음 셀</td></tr>
+  <tr><td><kbd>Esc</kbd></td><td>편집 종료 → 명령 모드</td></tr>
+  <tr><td class="grp" colspan=2>어디서나</td></tr>
+  <tr><td><kbd>?</kbd></td><td>이 도움말</td></tr>
+</table></div>`;
+document.body.appendChild(help);
+help.addEventListener("click",(e)=>{ if(e.target===help) toggleHelp(false); });
+function toggleHelp(force){ const on = force!==undefined?force:!help.classList.contains("open");
+  help.classList.toggle("open", on); }
+document.getElementById("helpbtn").onclick=()=>toggleHelp();
+
 document.getElementById("runall").onclick = () => send({type:"run_all"});
 document.getElementById("restart").onclick = () => { if(confirm("Restart kernel? All state is lost.")) send({type:"restart"}); };
 connect();
@@ -329,7 +425,9 @@ function openEditor(c){
     theme: darkMq.matches ? "dracula" : "default",
     viewportMargin: Infinity,
     extraKeys: {"Cmd-Enter": () => saveEditor(c.id, true),
-                "Ctrl-Enter": () => saveEditor(c.id, true)},
+                "Ctrl-Enter": () => saveEditor(c.id, true),
+                "Shift-Enter": () => { saveEditor(c.id, true); selectRel(1); },
+                "Esc": () => { closeEditor(c.id); const card=document.getElementById("cell-"+c.id); card&&card.focus&&card.focus(); }},
   });
   editors[c.id] = cm; cm.focus();
 }

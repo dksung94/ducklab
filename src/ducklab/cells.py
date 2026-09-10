@@ -21,8 +21,9 @@ class Cell:
     title: str
     source: str
     lineno: int      # 1-based line of the cell's first source line
-    src_begin: int = 0  # 0-based line index where the cell's source starts
-    src_end: int = 0    # 0-based exclusive end (next marker or EOF)
+    src_begin: int = 0   # 0-based line index where the cell's source starts
+    src_end: int = 0     # 0-based exclusive end (next marker or EOF)
+    marker_line: int = -1  # 0-based line of this cell's "# %%" (-1 = implicit preamble)
 
 
 def parse_cells(text: str) -> list[Cell]:
@@ -42,14 +43,16 @@ def parse_cells(text: str) -> list[Cell]:
         begin = mark_i + 1
         end = starts[n + 1][0] if n + 1 < len(starts) else len(lines)
         source = "\n".join(lines[begin:end]).strip("\n")
-        if not source.strip() and not title:
+        # keep explicitly-marked cells even when empty (freshly inserted cells);
+        # only drop the implicit preamble when it has nothing in it
+        if mark_i == -1 and not source.strip():
             continue
         h = hashlib.sha1(source.encode()).hexdigest()[:8]
         occ = seen.get(h, 0)
         seen[h] = occ + 1
         cells.append(Cell(id=f"{h}-{occ}", idx=len(cells), title=title,
                           source=source, lineno=begin + 1,
-                          src_begin=begin, src_end=end))
+                          src_begin=begin, src_end=end, marker_line=mark_i))
     return cells
 
 
@@ -63,3 +66,40 @@ def replace_cell_source(text: str, cell_id: str, new_source: str) -> str:
             out = lines[: c.src_begin] + new_lines + lines[c.src_end:]
             return "\n".join(out) + ("\n" if text.endswith("\n") else "")
     raise KeyError(cell_id)
+
+
+def _eol(text: str) -> str:
+    return "\n" if text.endswith("\n") or not text else ""
+
+
+def delete_cell(text: str, cell_id: str) -> str:
+    """Remove a cell entirely (its marker line through its source)."""
+    lines = text.splitlines()
+    for c in parse_cells(text):
+        if c.id == cell_id:
+            start = c.marker_line if c.marker_line >= 0 else c.src_begin
+            out = lines[:start] + lines[c.src_end:]
+            return "\n".join(out) + _eol(text)
+    raise KeyError(cell_id)
+
+
+def insert_cell(text: str, ref_id: str, where: str = "below", title: str = "") -> str:
+    """Insert a new empty '# %%' cell above/below the referenced cell.
+    Returns (new_text). A bare ref of '' appends at end of file."""
+    lines = text.splitlines()
+    block = [f"# %% {title}".rstrip(), ""]
+    cells = parse_cells(text)
+    if not ref_id or not cells:
+        at = len(lines)
+        pad = [""] if lines and lines[-1].strip() else []
+        out = lines + pad + block
+        return "\n".join(out) + "\n"
+    for c in cells:
+        if c.id == ref_id:
+            if where == "above":
+                at = c.marker_line if c.marker_line >= 0 else c.src_begin
+            else:  # below
+                at = c.src_end
+            out = lines[:at] + block + lines[at:]
+            return "\n".join(out) + _eol(text)
+    raise KeyError(ref_id)

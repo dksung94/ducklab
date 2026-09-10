@@ -34,7 +34,7 @@ from fastapi.staticfiles import StaticFiles
 from ptyprocess import PtyProcessUnicode
 from watchfiles import awatch
 
-from .cells import parse_cells, replace_cell_source
+from .cells import delete_cell, insert_cell, parse_cells, replace_cell_source
 from .kernel import FileKernel
 
 STATIC = Path(__file__).parent / "static"
@@ -798,6 +798,23 @@ def create_app(root: Path, initial: str | None = None, host: str = "127.0.0.1",
                         cell = next((c for c in session.cells if c.idx == old.idx), None)
                         if cell:
                             session.executor.submit(session.run_cell_blocking, cell.id)
+                elif msg["type"] == "insert":
+                    try:
+                        new_text = insert_cell(session.file.read_text(),
+                                               msg.get("cell") or "", msg.get("where", "below"))
+                    except KeyError:
+                        continue
+                    session.file.write_text(new_text)
+                    session.reparse()
+                    await session.send_all(session.cells_msg())
+                elif msg["type"] == "delete":
+                    try:
+                        new_text = delete_cell(session.file.read_text(), msg["cell"])
+                    except KeyError:
+                        continue
+                    session.file.write_text(new_text)
+                    session.reparse()
+                    await session.send_all(session.cells_msg())
                 elif msg["type"] == "restart":
                     if session.kernel:
                         await asyncio.get_running_loop().run_in_executor(
