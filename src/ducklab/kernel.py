@@ -15,6 +15,8 @@ import threading
 from dataclasses import dataclass, field
 from typing import Callable
 
+import time
+
 from jupyter_client import KernelManager
 
 _ANSI = re.compile(r"\x1b\[[0-9;]*m")
@@ -37,6 +39,10 @@ class FileKernel:
         self.kc = self.km.client()
         self.kc.start_channels()
         self.kc.wait_for_ready(timeout=60)
+        self.started_at = time.time()
+        proc = getattr(self.km, "provisioner", None)
+        proc = getattr(proc, "process", None)
+        self.pid = getattr(proc, "pid", None)
         self._lock = threading.Lock()  # one execution at a time per kernel
         self.execute("%matplotlib inline", lambda o: None)
 

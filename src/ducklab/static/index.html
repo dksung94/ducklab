@@ -56,6 +56,14 @@ pre.code{margin:0;padding:12px 14px;background:var(--code);font-family:ui-monosp
 #drawer a:hover{background:var(--code)}
 #drawer a.cur{background:var(--accent);color:var(--accent-ink)}
 #drawer a .k{font-size:10px;opacity:.7;margin-left:6px}
+#drawer .khead{padding:10px 14px 4px;border-top:1px solid var(--rule);font-size:11px;font-weight:700;
+ letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+#drawer .krow{padding:7px 10px;margin:2px 6px;border:1px solid var(--rule);border-radius:8px;font-size:11.5px}
+#drawer .krow .kf{font-family:ui-monospace,Menlo,monospace;font-size:12px;color:var(--ink);
+ white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#drawer .krow .ki{color:var(--muted);margin:3px 0 5px}
+#drawer .krow button{padding:2px 9px;font-size:11px;margin-right:6px}
+#drawer .krow .dead{color:var(--muted);font-style:italic}
 #scrim{position:fixed;inset:0;z-index:14;background:rgba(0,0,0,.35);display:none}
 #scrim.open{display:block}
 #settings{position:fixed;inset:0;z-index:20;display:none;align-items:center;justify-content:center;background:rgba(0,0,0,.45)}
@@ -202,7 +210,7 @@ function saveEditor(id, run){
 
 // ---- files drawer ----
 const drawer=document.createElement("div"); drawer.id="drawer";
-drawer.innerHTML='<div class="dhead">workspace<br><b id="droot"></b></div><div class="dlist" id="dlist"></div>';
+drawer.innerHTML='<div class="dhead">workspace<br><b id="droot"></b></div><div class="dlist" id="dlist"></div><div class="khead">kernels</div><div id="klist" style="padding-bottom:10px"></div>';
 const scrim=document.createElement("div"); scrim.id="scrim";
 document.body.appendChild(scrim); document.body.appendChild(drawer);
 async function openDrawer(){
@@ -212,6 +220,28 @@ async function openDrawer(){
   document.getElementById("dlist").innerHTML=d.files.map(p=>
     `<a href="/?file=${encodeURIComponent(p)}" class="${p===cur?'cur':''}">${p}${d.open.includes(p)?'<span class="k">●kernel</span>':''}</a>`).join("");
   drawer.classList.add("open"); scrim.classList.add("open");
+  paintKernels();
+}
+function ago(ts){ if(!ts) return "—"; const s=Math.max(0,(Date.now()/1000-ts)|0);
+  return s<60?s+"s":(s<3600?(s/60|0)+"m":(s/3600|0)+"h")+" ago"; }
+async function paintKernels(){
+  const r=await fetch("/api/kernels"); const d=await r.json();
+  const box=document.getElementById("klist");
+  if(!d.kernels.length){ box.innerHTML='<div class="krow dead">아직 연 파일 없음</div>'; return; }
+  box.innerHTML=d.kernels.map(k=>`<div class="krow">
+    <div class="kf">${k.alive?'●':'○'} ${k.file}</div>
+    <div class="ki">${k.alive
+      ? `pid ${k.pid??'?'} · ${k.rss_mb??'?'}MB · runs ${k.runs} · last ${ago(k.last_run_at)}`
+      : `kernel 없음 · runs ${k.runs} (다음 실행 시 새로 시작)`}</div>
+    ${k.alive?`<button data-krestart="${k.file}">Restart</button><button data-kstop="${k.file}">Stop</button>`:''}
+  </div>`).join("");
+  box.querySelectorAll("[data-kstop]").forEach(b=>b.onclick=async()=>{
+    await fetch("/api/kernels/stop",{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({file:b.dataset.kstop})}); paintKernels();});
+  box.querySelectorAll("[data-krestart]").forEach(b=>b.onclick=async()=>{
+    b.textContent="…";
+    await fetch("/api/kernels/restart",{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({file:b.dataset.krestart})}); paintKernels();});
 }
 function closeDrawer(){ drawer.classList.remove("open"); scrim.classList.remove("open"); }
 document.getElementById("filesbtn").onclick=openDrawer;

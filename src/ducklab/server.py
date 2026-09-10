@@ -16,7 +16,9 @@ import asyncio
 import json
 import os
 import shlex
+import subprocess
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -105,6 +107,8 @@ class Session:
         self.outputs: dict[str, list[dict]] = {}
         self.clients: set[WebSocket] = set()
         self.loop: asyncio.AbstractEventLoop | None = None
+        self.last_run_at: float | None = None
+        self.run_count = 0
         # one worker thread per session: runs are FIFO-ordered and the kernel
         # is only ever created/used from this thread (no creation race)
         self.executor = ThreadPoolExecutor(max_workers=1)
@@ -140,6 +144,8 @@ class Session:
             self.outputs.setdefault(cell_id, []).append(out)
             self.send_threadsafe({"type": "output", "cell": cell_id, "out": out})
 
+        self.last_run_at = time.time()
+        self.run_count += 1
         try:
             self.ensure_kernel().execute(cell.source, on_output)
         except Exception as e:  # surface infra failures as a cell error, never swallow
@@ -297,6 +303,50 @@ def create_app(root: Path, initial: str | None = None, host: str = "127.0.0.1",
         if cell is None:
             return {"ok": False, "error": f"no cell {ref!r}; see /api/cells"}
         return {"ok": True, "cell": cell.idx, "outputs": s.outputs_view(cell.id)}
+
+    def _rss_mb(pid: int | None) -> float | None:
+        if not pid:
+            return None
+        try:
+            kb = int(subprocess.check_output(["ps", "-o", "rss=", "-p", str(pid)],
+                                             text=True).strip() or 0)
+            return round(kb / 1024, 1)
+        except Exception:
+            return None
+
+    @app.get("/api/kernels")
+    async def api_kernels():
+        """Which kernels are alive and which file each one belongs to."""
+        rows = []
+        for rel in sorted(hub.sessions):
+            s = hub.sessions[rel]
+            k = s.kernel
+            rows.append({
+                "file": rel, "alive": k is not None,
+                "pid": getattr(k, "pid", None) if k else None,
+                "rss_mb": _rss_mb(getattr(k, "pid", None)) if k else None,
+                "started_at": getattr(k, "started_at", None) if k else None,
+                "last_run_at": s.last_run_at, "runs": s.run_count,
+                "clients": len(s.clients),
+            })
+        return {"kernels": rows}
+
+    @app.post("/api/kernels/stop")
+    async def api_kernel_stop(body: dict):
+        s = hub.session(body.get("file"))
+        if s.kernel:
+            await asyncio.get_running_loop().run_in_executor(s.executor, s.kernel.shutdown)
+            s.kernel = None
+        await s.send_all({"type": "status", "state": "stopped"})
+        return {"ok": True, "file": s.rel, "note": "cells/outputs kept; next run starts a fresh kernel"}
+
+    @app.post("/api/kernels/restart")
+    async def api_kernel_restart(body: dict):
+        s = hub.session(body.get("file"))
+        if s.kernel:
+            await asyncio.get_running_loop().run_in_executor(s.executor, s.kernel.restart)
+        await s.send_all({"type": "status", "state": "restarted"})
+        return {"ok": True, "file": s.rel}
 
     @app.get("/api/config")
     async def api_config_get(file: str | None = None):
