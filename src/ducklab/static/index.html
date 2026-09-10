@@ -28,6 +28,13 @@ button:active{transform:translateY(1px)}
 .cell{background:var(--card);border:1px solid var(--rule);border-radius:12px;margin:12px 0;overflow:hidden}
 .cell.busy{border-color:var(--busy)}
 .cell.sel{border-color:var(--accent);box-shadow:inset 3px 0 0 var(--accent)}
+#addcell{display:flex;justify-content:center;margin:8px 0 24px}
+#addcell button{display:flex;align-items:center;gap:7px;border:1px dashed var(--rule);background:var(--card);
+ color:var(--muted);border-radius:999px;padding:8px 18px;font-size:13px;transition:all .14s}
+#addcell button:hover{color:var(--accent);border-color:var(--accent);border-style:solid;
+ background:color-mix(in srgb,var(--accent) 8%,transparent)}
+#addcell .plus{display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;
+ border-radius:50%;border:1.5px solid currentColor;font-size:14px;line-height:1}
 .cell.sel .chead{background:color-mix(in srgb,var(--accent) 7%,transparent)}
 #help{position:fixed;inset:0;z-index:25;display:none;align-items:center;justify-content:center;background:rgba(0,0,0,.5)}
 #help.open{display:flex}
@@ -318,6 +325,10 @@ function render(cells){
     $cells.appendChild(d);
     paintOut(c.id);
   }
+  const add=document.createElement("div"); add.id="addcell";
+  add.innerHTML='<button title="맨 아래에 셀 추가 (b)"><span class="plus">+</span> 셀 추가</button>';
+  add.querySelector("button").onclick=()=>send({type:"insert",cell:"",where:"below"});
+  $cells.appendChild(add);
   applySel();
 }
 
