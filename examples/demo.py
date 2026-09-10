@@ -18,3 +18,19 @@ plt.show()
 
 # %% error demo
 1 / 0
+
+# %% bar chart
+import matplotlib.pyplot as plt
+import numpy as np
+
+rng = np.random.default_rng(0)
+fruits = ["apple", "banana", "cherry", "grape", "mango"]
+sales = rng.integers(20, 100, size=len(fruits))
+
+plt.figure(figsize=(6, 3))
+bars = plt.bar(fruits, sales, color="#4C78A8")
+plt.bar_label(bars)
+plt.title("weekly fruit sales")
+plt.ylabel("units")
+plt.tight_layout()
+plt.show()

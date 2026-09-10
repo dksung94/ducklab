@@ -4,7 +4,7 @@
 <link rel="stylesheet" href="/static/vendor/xterm.css">
 <link rel="stylesheet" href="/static/vendor/codemirror.css">
 <style>
-:root{--bg:#f6f5f1;--card:#ffffff;--ink:#1c1e21;--muted:#6a6f76;--rule:#e3e0d8;
+:root{color-scheme:light dark;--bg:#f6f5f1;--card:#ffffff;--ink:#1c1e21;--muted:#6a6f76;--rule:#e3e0d8;
  --accent:#3a5a46;--accent-ink:#fff;--err:#a6392f;--busy:#8a641c;--code:#f0eee8}
 @media (prefers-color-scheme:dark){:root{--bg:#101211;--card:#181b19;--ink:#e8eae6;--muted:#8b918b;
  --rule:#262a27;--accent:#7fae8f;--accent-ink:#10130f;--err:#e0857d;--busy:#d9b45c;--code:#141614}}
@@ -45,13 +45,26 @@ pre.code{margin:0;padding:12px 14px;background:var(--code);font-family:ui-monosp
 .cell.editing .editbar{display:flex}
 .cell.editing pre.code{display:none}
 .cm-holder{display:none}.cell.editing .cm-holder{display:block}
+#drawer{position:fixed;top:0;left:0;bottom:0;z-index:15;width:min(320px,85vw);background:var(--card);
+ border-right:1px solid var(--rule);transform:translateX(-100%);transition:transform .18s ease;display:flex;flex-direction:column}
+#drawer.open{transform:none}
+#drawer .dhead{padding:12px 14px;border-bottom:1px solid var(--rule);font-size:12px;color:var(--muted)}
+#drawer .dhead b{color:var(--ink);font-family:ui-monospace,Menlo,monospace;font-size:12px;word-break:break-all}
+#drawer .dlist{overflow-y:auto;flex:1;padding:6px}
+#drawer a{display:block;padding:7px 10px;border-radius:8px;color:var(--ink);text-decoration:none;
+ font:12.5px ui-monospace,Menlo,monospace;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#drawer a:hover{background:var(--code)}
+#drawer a.cur{background:var(--accent);color:var(--accent-ink)}
+#drawer a .k{font-size:10px;opacity:.7;margin-left:6px}
+#scrim{position:fixed;inset:0;z-index:14;background:rgba(0,0,0,.35);display:none}
+#scrim.open{display:block}
 #settings{position:fixed;inset:0;z-index:20;display:none;align-items:center;justify-content:center;background:rgba(0,0,0,.45)}
 #settings.open{display:flex}
 #settings .panel{background:var(--card);border:1px solid var(--rule);border-radius:14px;width:min(620px,92vw);
  max-height:86vh;overflow:auto;padding:20px}
 #settings h3{margin:0 0 4px;font-size:16px}
-#settings .hint{font-size:12px;color:var(--muted);margin:0 0 14px}
-#settings label{display:block;font-size:12px;font-weight:600;color:var(--muted);margin:12px 0 4px}
+#settings .hint{font-size:12.5px;color:var(--muted);margin:0 0 14px;line-height:1.55}
+#settings label{display:block;font-size:12.5px;font-weight:700;color:var(--ink);margin:14px 0 5px}
 #settings input[type=text],#settings textarea{width:100%;font:12.5px ui-monospace,Menlo,monospace;color:var(--ink);
  background:var(--code);border:1px solid var(--rule);border-radius:8px;padding:8px 10px}
 #settings textarea{min-height:180px;resize:vertical;line-height:1.5}
@@ -66,6 +79,7 @@ pre.code{margin:0;padding:12px 14px;background:var(--code);font-family:ui-monosp
 body.termopen .wrap{padding-bottom:calc(42vh + 60px)}
 </style></head><body>
 <div class="top">
+  <button id="filesbtn" title="files">☰</button>
   <div class="dot" id="dot"></div>
   <div class="name" id="fname">ducklab</div>
   <button id="runall" class="primary">Run All</button>
@@ -75,12 +89,14 @@ body.termopen .wrap{padding-bottom:calc(42vh + 60px)}
 </div>
 <div class="wrap" id="cells"></div>
 <script>
+const FILE = new URLSearchParams(location.search).get("file") || "";
+const FQ = FILE ? "?file="+encodeURIComponent(FILE) : "";
 let ws, outputs = {};   // cell id -> [out]
 const $cells = document.getElementById("cells");
 const $dot = document.getElementById("dot");
 
 function connect(){
-  ws = new WebSocket((location.protocol==="https:"?"wss://":"ws://")+location.host+"/ws");
+  ws = new WebSocket((location.protocol==="https:"?"wss://":"ws://")+location.host+"/ws"+FQ);
   ws.onopen = () => $dot.classList.add("on");
   ws.onclose = () => { $dot.classList.remove("on"); setTimeout(connect, 1500); };
   ws.onmessage = (ev) => handle(JSON.parse(ev.data));
@@ -184,6 +200,23 @@ function saveEditor(id, run){
   closeEditor(id);
 }
 
+// ---- files drawer ----
+const drawer=document.createElement("div"); drawer.id="drawer";
+drawer.innerHTML='<div class="dhead">workspace<br><b id="droot"></b></div><div class="dlist" id="dlist"></div>';
+const scrim=document.createElement("div"); scrim.id="scrim";
+document.body.appendChild(scrim); document.body.appendChild(drawer);
+async function openDrawer(){
+  const r=await fetch("/api/files"); const d=await r.json();
+  document.getElementById("droot").textContent=d.root;
+  const cur=document.getElementById("fname").textContent;
+  document.getElementById("dlist").innerHTML=d.files.map(p=>
+    `<a href="/?file=${encodeURIComponent(p)}" class="${p===cur?'cur':''}">${p}${d.open.includes(p)?'<span class="k">●kernel</span>':''}</a>`).join("");
+  drawer.classList.add("open"); scrim.classList.add("open");
+}
+function closeDrawer(){ drawer.classList.remove("open"); scrim.classList.remove("open"); }
+document.getElementById("filesbtn").onclick=openDrawer;
+scrim.onclick=closeDrawer;
+
 // ---- settings modal ----
 const settings=document.createElement("div"); settings.id="settings";
 settings.innerHTML=`<div class="panel">
@@ -192,6 +225,8 @@ settings.innerHTML=`<div class="panel">
      저장은 파일 옆 <code>.ducklab.json</code> — <b>다음에 여는 터미널부터</b> 적용.</p>
   <label>Agent command (claude · codex · 빈칸 = 셸만)</label>
   <input type="text" id="cfg-agent" placeholder="claude">
+  <label>Default workspace — 인자 없이 <code>ducklab</code> 실행 시 열 디렉터리 (다음 실행부터)</label>
+  <input type="text" id="cfg-workspace" placeholder="~/PycharmProjects/psi">
   <label>Context prompt — 플레이스홀더 {file} {url} · 빈칸 = 프롬프트 없이 실행</label>
   <textarea id="cfg-prompt"></textarea>
   <div class="row">
@@ -203,8 +238,9 @@ settings.innerHTML=`<div class="panel">
 document.body.appendChild(settings);
 let cfgDefault="";
 async function openSettings(){
-  const r=await fetch("/api/config"); const c=await r.json();
+  const r=await fetch("/api/config"+FQ); const c=await r.json();
   document.getElementById("cfg-agent").value=c.agent||"";
+  document.getElementById("cfg-workspace").value=c.workspace||"";
   document.getElementById("cfg-prompt").value=c.prompt_template||"";
   cfgDefault=c.default_prompt||"";
   document.getElementById("cfg-note").textContent=c.overridden_by_cli?"주의: --term-cmd CLI 오버라이드가 켜져 있어 설정이 무시됩니다":"";
@@ -216,7 +252,9 @@ document.getElementById("cfg-cancel").onclick=()=>settings.classList.remove("ope
 document.getElementById("cfg-default").onclick=()=>{document.getElementById("cfg-prompt").value=cfgDefault;};
 document.getElementById("cfg-save").onclick=async()=>{
   await fetch("/api/config",{method:"POST",headers:{"Content-Type":"application/json"},
-    body:JSON.stringify({agent:document.getElementById("cfg-agent").value,
+    body:JSON.stringify({file:FILE||null,
+                         agent:document.getElementById("cfg-agent").value,
+                         workspace:document.getElementById("cfg-workspace").value,
                          prompt_template:document.getElementById("cfg-prompt").value})});
   settings.classList.remove("open");
 };
@@ -232,7 +270,7 @@ function openTerm(){
   term=new Terminal({fontSize:13,fontFamily:"Menlo,monospace",theme:{background:"#111"}});
   fit=new FitAddon.FitAddon(); term.loadAddon(fit);
   term.open(document.getElementById("term")); fit.fit();
-  tws=new WebSocket((location.protocol==="https:"?"wss://":"ws://")+location.host+"/ws/term");
+  tws=new WebSocket((location.protocol==="https:"?"wss://":"ws://")+location.host+"/ws/term"+FQ);
   tws.onmessage=(e)=>term.write(e.data);
   tws.onopen=()=>tws.send(JSON.stringify({type:"resize",cols:term.cols,rows:term.rows}));
   tws.onclose=()=>term.write("\r\n[disconnected]\r\n");
