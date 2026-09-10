@@ -25,7 +25,7 @@ button:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
 button.primary{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
 button:active{transform:translateY(1px)}
 .wrap{max-width:880px;margin:0 auto;padding:14px 12px 90px}
-.cell{background:var(--card);border:1px solid var(--rule);border-radius:12px;margin:12px 0;overflow:hidden}
+.cell{background:var(--card);border:1px solid var(--rule);border-radius:12px;margin:12px 0;overflow:visible;position:relative}
 .cell.busy{border-color:var(--busy)}
 .cell.sel{border-color:var(--accent);box-shadow:inset 3px 0 0 var(--accent)}
 #addcell{display:flex;justify-content:center;margin:8px 0 24px}
@@ -62,6 +62,14 @@ kbd{font:11.5px ui-monospace,Menlo,monospace;background:var(--code);border:1px s
 .chead .t .ln{color:var(--faint,#999);font-weight:400}
 .chead button{padding:3px 11px;font-size:12px;opacity:.85}
 .chead button:hover{opacity:1}
+.cellmenu{position:absolute;right:10px;top:38px;z-index:6;background:var(--card);border:1px solid var(--rule);
+ border-radius:10px;box-shadow:0 8px 26px rgba(0,0,0,.28);padding:5px;min-width:150px;display:none}
+.cellmenu.open{display:block}
+.cellmenu button{display:flex;width:100%;justify-content:flex-start;gap:8px;border:0;border-radius:7px;
+ padding:7px 11px;font-size:12.5px;background:transparent}
+.cellmenu button:hover{background:var(--code)}
+.cellmenu button.danger{color:var(--err)}
+.cellmenu .sep{height:1px;background:var(--rule);margin:4px 2px}
 .chead .saved{font-size:11px;color:var(--accent);opacity:0;transition:opacity .15s;flex:none;
  font-weight:600;pointer-events:none}
 .chead .saved.on{opacity:1}
@@ -194,6 +202,7 @@ body.termopen-right{padding-right:var(--termw,40vw)}
   <div class="name" id="fname">ducklab</div>
   <button id="runall" class="primary">Run All</button>
   <button id="restart">Restart</button>
+  <button id="clearall" title="모든 셀 출력 지우기">출력 지우기</button>
   <button id="envchip" title="python environment">env</button>
   <button id="termtoggle">Terminal</button>
   <button id="helpbtn" title="단축키 (?)">?</button>
@@ -252,6 +261,8 @@ function handle(m){
     paintOut(m.cell);
   } else if(m.type==="clear"){
     outputs[m.cell] = []; paintOut(m.cell);
+  } else if(m.type==="clear_all"){
+    for(const k of Object.keys(outputs)){ outputs[k]=[]; paintOut(k); }
   } else if(m.type==="edit_rejected"){
     alert("Edit rejected: " + m.reason);
   } else if(m.type==="status"){
@@ -305,7 +316,19 @@ function render(cells){
         <span class="saved">✓ 저장됨</span>
         <button data-ask="${c.id}" title="이 셀에 대해 AI에게 지시">AI</button>
         <button data-edit="${c.id}">Edit</button>
-        <button data-run="${c.id}">Run</button></div>
+        <button data-run="${c.id}">Run</button>
+        <button data-menu="${c.id}" title="더보기">⋯</button></div>
+      <div class="cellmenu">
+        <button data-op="insert-above">↑ 위에 삽입</button>
+        <button data-op="insert-below">↓ 아래에 삽입</button>
+        <button data-op="duplicate">⧉ 복제</button>
+        <div class="sep"></div>
+        <button data-op="up">▲ 위로 이동</button>
+        <button data-op="down">▼ 아래로 이동</button>
+        <div class="sep"></div>
+        <button data-op="clear">⌫ 출력 지우기</button>
+        <button data-op="delete" class="danger">🗑 삭제</button>
+      </div>
       <pre class="code"></pre>
       <div class="askbar">
         <input type="text" placeholder="이 셀에 대해 AI에게… (Enter = 터미널로 전달, Esc = 닫기)">
@@ -339,6 +362,13 @@ function render(cells){
     d.querySelector("[data-saverun]").onclick = () => saveEditor(c.id, true);
     d.querySelector("[data-cancel]").onclick = () => closeEditor(c.id);
     d.addEventListener("mousedown",(ev)=>{ if(!ev.target.closest(".CodeMirror")) selectCell(c.id, false); });
+    const menu=d.querySelector(".cellmenu");
+    d.querySelector("[data-menu]").onclick=(ev)=>{ ev.stopPropagation();
+      const wasOpen=menu.classList.contains("open");
+      document.querySelectorAll(".cellmenu.open").forEach(x=>x.classList.remove("open"));
+      if(!wasOpen) menu.classList.add("open"); };
+    menu.querySelectorAll("[data-op]").forEach(bt=>bt.onclick=(ev)=>{
+      ev.stopPropagation(); menu.classList.remove("open"); cellOp(bt.dataset.op, c); });
     $cells.appendChild(d);
     paintOut(c.id);
   }
@@ -447,8 +477,19 @@ function toggleHelp(force){ const on = force!==undefined?force:!help.classList.c
   help.classList.toggle("open", on); }
 document.getElementById("helpbtn").onclick=()=>toggleHelp();
 
+function cellOp(op, c){
+  if(op==="insert-above") send({type:"insert",cell:c.id,where:"above"});
+  else if(op==="insert-below") send({type:"insert",cell:c.id,where:"below"});
+  else if(op==="duplicate") send({type:"duplicate",cell:c.id});
+  else if(op==="up") send({type:"move",cell:c.id,delta:-1});
+  else if(op==="down") send({type:"move",cell:c.id,delta:1});
+  else if(op==="clear") send({type:"clear_output",cell:c.id});
+  else if(op==="delete"){ if(confirm(`셀 [${c.idx}] ${c.title||""} 삭제?`)) send({type:"delete",cell:c.id}); }
+}
+document.addEventListener("click",()=>document.querySelectorAll(".cellmenu.open").forEach(x=>x.classList.remove("open")));
 document.getElementById("runall").onclick = () => send({type:"run_all"});
 document.getElementById("restart").onclick = () => { if(confirm("Restart kernel? All state is lost.")) send({type:"restart"}); };
+document.getElementById("clearall").onclick = () => send({type:"clear_all"});
 connect();
 
 // ---- inline cell editor (CodeMirror) ----

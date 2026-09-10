@@ -118,3 +118,45 @@ def replace_cell(text: str, cell_id: str, new_source: str, new_title=None) -> st
                 out[c.marker_line] = ("# %% " + new_title).rstrip()
             return "\n".join(out) + ("\n" if text.endswith("\n") else "")
     raise KeyError(cell_id)
+
+
+def _blocks(text):
+    """Split the file into (cell, [lines]) blocks that tile it end to end."""
+    lines = text.splitlines()
+    cells = parse_cells(text)
+    spans = [((c.marker_line if c.marker_line >= 0 else 0), c.src_end) for c in cells]
+    return cells, [lines[s:e] for s, e in spans]
+
+
+def move_cell(text: str, cell_id: str, delta: int) -> str:
+    """Move a cell up (delta=-1) or down (delta=+1). No-op at the ends. An
+    implicit preamble (no marker) stays pinned at the top."""
+    cells, blocks = _blocks(text)
+    ids = [c.id for c in cells]
+    if cell_id not in ids:
+        raise KeyError(cell_id)
+    i = ids.index(cell_id)
+    lo = 1 if cells and cells[0].marker_line < 0 else 0  # can't move above preamble
+    if i < lo:
+        return text
+    j = i + delta
+    if j < lo or j >= len(blocks):
+        return text
+    blocks[i], blocks[j] = blocks[j], blocks[i]
+    out = [l for blk in blocks for l in blk]
+    return "\n".join(out) + ("\n" if text.endswith("\n") else "")
+
+
+def duplicate_cell(text: str, cell_id: str) -> str:
+    """Insert a copy of the cell right below it."""
+    cells, blocks = _blocks(text)
+    ids = [c.id for c in cells]
+    if cell_id not in ids:
+        raise KeyError(cell_id)
+    i = ids.index(cell_id)
+    copy = list(blocks[i])
+    if cells[i].marker_line < 0:            # preamble has no marker; give the copy one
+        copy = ["# %% ", *copy]
+    blocks.insert(i + 1, copy)
+    out = [l for blk in blocks for l in blk]
+    return "\n".join(out) + ("\n" if text.endswith("\n") else "")

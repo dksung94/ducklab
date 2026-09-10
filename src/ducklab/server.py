@@ -34,7 +34,8 @@ from fastapi.staticfiles import StaticFiles
 from ptyprocess import PtyProcessUnicode
 from watchfiles import awatch
 
-from .cells import delete_cell, insert_cell, parse_cells, replace_cell, replace_cell_source
+from .cells import (delete_cell, duplicate_cell, insert_cell, move_cell,
+                    parse_cells, replace_cell, replace_cell_source)
 from .kernel import FileKernel
 
 STATIC = Path(__file__).parent / "static"
@@ -809,14 +810,26 @@ def create_app(root: Path, initial: str | None = None, host: str = "127.0.0.1",
                     session.file.write_text(new_text)
                     session.reparse()
                     await session.send_all(session.cells_msg())
-                elif msg["type"] == "delete":
+                elif msg["type"] in ("delete", "move", "duplicate"):
                     try:
-                        new_text = delete_cell(session.file.read_text(), msg["cell"])
+                        cur = session.file.read_text()
+                        if msg["type"] == "delete":
+                            new_text = delete_cell(cur, msg["cell"])
+                        elif msg["type"] == "move":
+                            new_text = move_cell(cur, msg["cell"], int(msg.get("delta", 0)))
+                        else:
+                            new_text = duplicate_cell(cur, msg["cell"])
                     except KeyError:
                         continue
                     session.file.write_text(new_text)
                     session.reparse()
                     await session.send_all(session.cells_msg())
+                elif msg["type"] == "clear_output":
+                    session.outputs.pop(msg["cell"], None)
+                    await session.send_all({"type": "clear", "cell": msg["cell"]})
+                elif msg["type"] == "clear_all":
+                    session.outputs.clear()
+                    await session.send_all({"type": "clear_all"})
                 elif msg["type"] == "restart":
                     if session.kernel:
                         await asyncio.get_running_loop().run_in_executor(
