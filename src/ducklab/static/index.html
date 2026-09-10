@@ -393,7 +393,7 @@ refreshEnvChip();
 
 // ---- files drawer ----
 const drawer=document.createElement("div"); drawer.id="drawer";
-drawer.innerHTML='<div class="dhead">workspace<br><b id="droot"></b><div style="margin-top:8px"><button id="newfile" style="font-size:12px;padding:4px 10px">＋ 새 파일</button></div></div><div class="dlist" id="dlist"></div><div class="khead">kernels</div><div id="klist" style="padding-bottom:10px"></div>';
+drawer.innerHTML='<div class="dhead">workspace<br><b id="droot"></b><div style="margin-top:8px"><button id="newfile" style="font-size:12px;padding:4px 10px">＋ 새 파일</button></div></div><div class="dlist" id="dlist"></div><div class="khead">kernels</div><div id="klist"></div><div class="khead">terminals</div><div id="tlist" style="padding-bottom:10px"></div>';
 const scrim=document.createElement("div"); scrim.id="scrim";
 document.body.appendChild(scrim); document.body.appendChild(drawer);
 async function openDrawer(){
@@ -403,7 +403,22 @@ async function openDrawer(){
   document.getElementById("dlist").innerHTML=d.files.map(p=>
     `<a href="/?file=${encodeURIComponent(p)}" class="${p===cur?'cur':''}">${p}${d.open.includes(p)?'<span class="k">●kernel</span>':''}</a>`).join("");
   drawer.classList.add("open"); scrim.classList.add("open");
-  paintKernels();
+  paintKernels(); paintTerminals();
+}
+async function paintTerminals(){
+  const box=document.getElementById("tlist");
+  const d=await (await fetch("/api/terminals")).json();
+  if(!d.terminals.length){ box.innerHTML='<div class="krow dead">열린 터미널 없음</div>'; return; }
+  box.innerHTML=d.terminals.map(t=>`<div class="krow">
+    <div class="kf">${t.alive?'●':'○'} ${t.file}</div>
+    <div class="ki">pid ${t.pid} · 연결 ${t.clients} · 새로고침해도 유지</div>
+    <button data-tclose="${t.file}">종료</button></div>`).join("");
+  box.querySelectorAll("[data-tclose]").forEach(b=>b.onclick=async()=>{
+    await fetch("/api/terminals/close",{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({file:b.dataset.tclose})});
+    if((b.dataset.tclose===(FILE||document.getElementById("fname").textContent)) && term){
+      try{tws&&tws.close();}catch(_){}; term.dispose(); term=null; tws=null; closeTerm(); }
+    paintTerminals();});
 }
 function ago(ts){ if(!ts) return "—"; const s=Math.max(0,(Date.now()/1000-ts)|0);
   return s<60?s+"s":(s<3600?(s/60|0)+"m":(s/3600|0)+"h")+" ago"; }
@@ -569,7 +584,7 @@ document.getElementById("cfg-save").onclick=async()=>{
 let term=null, tws=null, fit=null;
 const termwrap=document.createElement("div"); termwrap.id="termwrap";
 termwrap.innerHTML='<div id="termgrip"></div><div id="termbar"><span>terminal</span><span class="sp"></span>'+
-  '<button id="termdock" title="dock">⇥ 우측</button><button id="termclose">×</button></div><div id="term"></div>';
+  '<button id="termdock" title="dock">⇥ 우측</button><button id="termkill" title="세션 종료(에이전트 종료)">⏻ 종료</button><button id="termclose" title="닫기(세션 유지)">×</button></div><div id="term"></div>';
 document.body.appendChild(termwrap);
 let dock = localStorage.ducklab_dock || "bottom";
 function applyDock(){
@@ -601,8 +616,16 @@ function openTerm(){
 function closeTerm(){ termwrap.classList.remove("open");
   document.body.classList.remove("termopen-bottom","termopen-right"); }
 document.getElementById("termtoggle").onclick=()=>termwrap.classList.contains("open")?closeTerm():openTerm();
-termwrap.addEventListener("click",(e)=>{
+termwrap.addEventListener("click",async(e)=>{
   if(e.target.id==="termclose") closeTerm();
+  else if(e.target.id==="termkill"){
+    if(!confirm("터미널 세션을 종료할까요? 실행 중인 에이전트도 종료됩니다.")) return;
+    await fetch("/api/terminals/close",{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({file:FILE||null})});
+    try{ tws&&tws.close(); }catch(_){}
+    if(term){ term.dispose(); term=null; } tws=null; fit=null;
+    closeTerm(); showToast("터미널 세션 종료됨");
+  }
   else if(e.target.id==="termdock"){ dock = dock==="bottom" ? "right" : "bottom";
     localStorage.ducklab_dock = dock; applyDock(); }
 });

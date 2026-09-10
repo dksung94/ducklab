@@ -23,6 +23,7 @@ import sys as _sys
 import tempfile
 import threading
 import time
+from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -300,6 +301,78 @@ class Session:
             self.kernel.shutdown()
 
 
+# --------------------------------------------------------------- terminal ----
+class TermSession:
+    """A persistent pty for one file, managed like a kernel: it outlives the
+    browser (refresh = detach, not kill) and dies only on explicit close or
+    server exit. New clients replay a tail buffer and reattach to the SAME
+    process, so the paired agent's session survives a reload."""
+
+    MAX_BUF = 256 * 1024  # tail of raw output kept for reattach
+
+    def __init__(self, cwd: Path, launch: str | None, loop):
+        self.cwd = cwd
+        self.loop = loop
+        self.clients: set = set()
+        self.buf = deque(maxlen=self.MAX_BUF)  # bytes-as-chars tail
+        self.cols, self.rows = 80, 24
+        shell = os.environ.get("SHELL", "/bin/bash")
+        self.pty = PtyProcessUnicode.spawn([shell, "-l"], dimensions=(self.rows, self.cols), cwd=str(cwd))
+        self.pid = self.pty.pid
+        threading.Thread(target=self._reader, daemon=True).start()
+        if launch:
+            # start the agent once, after the shell settles
+            loop.call_later(0.8, self._write, launch + "\n")
+
+    def _reader(self):
+        while True:
+            try:
+                data = self.pty.read(65536)
+            except Exception:
+                break
+            self.buf.extend(data)
+            for ws in list(self.clients):
+                asyncio.run_coroutine_threadsafe(self._safe_send(ws, data), self.loop)
+
+    async def _safe_send(self, ws, data):
+        try:
+            await ws.send_text(data)
+        except Exception:
+            self.clients.discard(ws)
+
+    def _write(self, s: str):
+        try:
+            self.pty.write(s)
+        except Exception:
+            pass
+
+    def snapshot(self) -> str:
+        return "".join(self.buf)
+
+    def attach(self, ws):
+        self.clients.add(ws)
+
+    def detach(self, ws):
+        self.clients.discard(ws)
+
+    def resize(self, rows, cols):
+        self.rows, self.cols = rows, cols
+        try:
+            self.pty.setwinsize(rows, cols)
+        except Exception:
+            pass
+
+    @property
+    def alive(self) -> bool:
+        return self.pty.isalive()
+
+    def close(self):
+        try:
+            self.pty.terminate(force=True)
+        except Exception:
+            pass
+
+
 # ------------------------------------------------------------------- hub ----
 class Hub:
     """The workspace: lazily opens a Session per .py file."""
@@ -308,6 +381,7 @@ class Hub:
         self.root = root
         self.initial = initial
         self.sessions: dict[str, Session] = {}
+        self.terms: dict[str, TermSession] = {}
         self.loop: asyncio.AbstractEventLoop | None = None
 
     def resolve(self, rel: str | None) -> str:
@@ -691,67 +765,73 @@ def create_app(root: Path, initial: str | None = None, host: str = "127.0.0.1",
         except WebSocketDisconnect:
             session.clients.discard(ws)
 
+    def _term_launch(session: Session) -> str | None:
+        eff, _ = effective_config(session.file.parent, session.file.name)
+        if term_cmd_override is not None:
+            return term_cmd_override or None
+        agent = (eff.get("agent") or "").strip()
+        if not agent:
+            return None
+        prompt = compose_prompt_text(hub.root, eff, session.file.parent,
+                                     session.file.name, session.file, session.rel, host, port)
+        if not prompt:
+            return agent
+        # long prompt via temp file so the typed line stays short (a giant
+        # shlex-quoted string typed into a shell corrupts once editing wraps)
+        pf = Path(tempfile.gettempdir()) / f"ducklab-prompt-{os.getpid()}-{abs(hash(session.rel))}.txt"
+        pf.write_text(prompt)
+        return f'{agent} "$(cat {shlex.quote(str(pf))})"'
+
+    @app.get("/api/terminals")
+    async def api_terminals():
+        rows = []
+        for rel in sorted(hub.terms):
+            t = hub.terms[rel]
+            rows.append({"file": rel, "alive": t.alive, "pid": t.pid,
+                         "clients": len(t.clients)})
+        return {"terminals": rows}
+
+    @app.post("/api/terminals/close")
+    async def api_terminal_close(body: dict):
+        s = hub.session(body.get("file"))
+        t = hub.terms.pop(s.rel, None)
+        if t:
+            t.close()
+        return {"ok": True, "file": s.rel}
+
     @app.websocket("/ws/term")
     async def term_endpoint(ws: WebSocket):
-        """A real shell over a pty, one per connection. This is arbitrary code
-        execution — never expose beyond localhost/tailnet (docs 0001 §5.7)."""
+        """Attach to the file's persistent pty (created on first attach). A
+        refresh detaches without killing it; only an explicit close ends it.
+        Arbitrary code execution — never expose beyond localhost/tailnet
+        (docs 0001 §5.7)."""
         await ws.accept()
         try:
             session = hub.session(ws.query_params.get("file"))
         except FileNotFoundError:
             await ws.close()
             return
-        loop = asyncio.get_running_loop()
-        shell = os.environ.get("SHELL", "/bin/bash")
-        pty = PtyProcessUnicode.spawn(
-            [shell, "-l"], dimensions=(24, 80), cwd=str(session.file.parent))
-        # Auto-start the pairing AI. Two hard-won rules: the prompt goes into a
-        # temp file and is passed as "$(cat file)" — typing a giant shlex-quoted
-        # string into an interactive shell corrupts once line editing wraps —
-        # and injection is delayed so the shell finishes initializing first.
-        eff, _ = effective_config(session.file.parent, session.file.name)
-        if term_cmd_override is not None:
-            line = term_cmd_override or None
-        else:
-            agent = (eff.get("agent") or "").strip()
-            prompt = compose_prompt_text(hub.root, eff, session.file.parent,
-                                         session.file.name, session.file, session.rel, host, port)
-            if not agent:
-                line = None
-            elif prompt:
-                # pass the (possibly long) prompt via temp file so the typed line
-                # stays short — typing a big quoted string into a shell corrupts
-                pf = Path(tempfile.gettempdir()) / f"ducklab-prompt-{os.getpid()}-{id(ws)}.txt"
-                pf.write_text(prompt)
-                line = f'{agent} "$(cat {shlex.quote(str(pf))})"'
-            else:
-                line = agent
-        if line:
-            loop.call_later(0.8, pty.write, line + "\n")
-
-        def reader():
-            while True:
-                try:
-                    data = pty.read(65536)
-                except Exception:
-                    break
-                asyncio.run_coroutine_threadsafe(ws.send_text(data), loop)
-        threading.Thread(target=reader, daemon=True).start()
-
+        term = hub.terms.get(session.rel)
+        if term is None or not term.alive:
+            term = TermSession(session.file.parent, _term_launch(session),
+                               asyncio.get_running_loop())
+            hub.terms[session.rel] = term
+        # replay the tail so the reloaded page shows the ongoing session
+        snap = term.snapshot()
+        if snap:
+            await ws.send_text(snap)
+        term.attach(ws)
         try:
             while True:
                 msg = json.loads(await ws.receive_text())
                 if msg["type"] == "in":
-                    pty.write(msg["data"])
+                    term._write(msg["data"])
                 elif msg["type"] == "resize":
-                    pty.setwinsize(msg["rows"], msg["cols"])
+                    term.resize(msg["rows"], msg["cols"])
         except WebSocketDisconnect:
             pass
         finally:
-            try:
-                pty.terminate(force=True)
-            except Exception:
-                pass
+            term.detach(ws)   # keep the pty alive across the refresh
 
     return app
 

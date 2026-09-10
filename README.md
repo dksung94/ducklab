@@ -76,6 +76,9 @@ notebook."*
   explicit KernelSpec, and ipykernel is provisioned with `uv` if the venv lacks
   it — no preinstall, no kernelspec registration.
 - **Real terminal** — xterm + pty, resizable, dockable bottom or **side-by-side**.
+  Persistent like a kernel: a **refresh detaches, it doesn't kill** — the pty (and
+  the agent session in it) lives on the server, replays its tail on reconnect, and
+  ends only on explicit close. Listed with the kernels in the drawer.
 - **Workspace browser** — every `.py` in the tree, new-file creation, kernel badges.
 - **Syntax highlight** (Dracula in dark), dark/light theme, mobile-friendly
   observation layout.
