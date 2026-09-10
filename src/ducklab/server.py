@@ -17,6 +17,7 @@ import json
 import os
 import shlex
 import subprocess
+import tempfile
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -93,17 +94,26 @@ def effective_config(dirpath: Path, filename: str) -> tuple[dict, bool]:
     return eff, bool(over)
 
 
-def build_term_cmd(cfg: dict, file: Path, rel: str, host: str, port: int) -> str | None:
+def build_term_parts(cfg: dict, file: Path, rel: str, host: str, port: int) -> tuple[str, str | None] | None:
+    """(agent, rendered prompt or None); None when no agent configured."""
     agent = (cfg.get("agent") or "").strip()
     if not agent:
         return None
     tmpl = cfg.get("prompt_template") or ""
     if not tmpl.strip():
-        return agent
+        return (agent, None)
     prompt = (tmpl.replace("{file}", str(file))
                   .replace("{url}", f"http://{host}:{port}")
                   .replace("{rel}", rel))
-    return f"{agent} {shlex.quote(prompt)}"
+    return (agent, prompt)
+
+
+def build_term_cmd(cfg: dict, file: Path, rel: str, host: str, port: int) -> str | None:
+    parts = build_term_parts(cfg, file, rel, host, port)
+    if parts is None:
+        return None
+    agent, prompt = parts
+    return f"{agent} {shlex.quote(prompt)}" if prompt else agent
 
 
 # --------------------------------------------------------------- session ----
@@ -477,14 +487,27 @@ def create_app(root: Path, initial: str | None = None, host: str = "127.0.0.1",
         shell = os.environ.get("SHELL", "/bin/bash")
         pty = PtyProcessUnicode.spawn(
             [shell, "-l"], dimensions=(24, 80), cwd=str(session.file.parent))
-        # auto-start the pairing AI (or any command); typed into the shell so
-        # it is visible, and the shell remains after it exits. Config is read
-        # per-connection, so settings changes apply to the next terminal.
+        # Auto-start the pairing AI. Two hard-won rules: the prompt goes into a
+        # temp file and is passed as "$(cat file)" — typing a giant shlex-quoted
+        # string into an interactive shell corrupts once line editing wraps —
+        # and injection is delayed so the shell finishes initializing first.
         eff, _ = effective_config(session.file.parent, session.file.name)
-        cmd = term_cmd_override if term_cmd_override is not None else \
-            build_term_cmd(eff, session.file, session.rel, host, port)
-        if cmd:
-            pty.write(cmd + "\n")
+        if term_cmd_override is not None:
+            line = term_cmd_override or None
+        else:
+            parts = build_term_parts(eff, session.file, session.rel, host, port)
+            if parts is None:
+                line = None
+            else:
+                agent, prompt = parts
+                if prompt:
+                    pf = Path(tempfile.gettempdir()) / f"ducklab-prompt-{os.getpid()}-{id(ws)}.txt"
+                    pf.write_text(prompt)
+                    line = f'{agent} "$(cat {shlex.quote(str(pf))})"'
+                else:
+                    line = agent
+        if line:
+            loop.call_later(0.8, pty.write, line + "\n")
 
         def reader():
             while True:
