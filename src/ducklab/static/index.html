@@ -141,6 +141,12 @@ pre.code{margin:0;padding:12px 14px;background:var(--code);font-family:ui-monosp
 #settings .preset .src{font-size:10px;color:var(--faint);border:1px solid var(--rule);border-radius:5px;padding:1px 6px;flex:none}
 #settings .newpreset{display:flex;gap:8px;margin-top:8px}
 #settings .newpreset input{flex:none;width:200px}
+#settings .preset .pedit{font-size:11px;padding:2px 9px;flex:none}
+#settings .peditor{border:1px solid var(--accent);border-radius:9px;padding:11px;margin:4px 0 8px}
+#settings .peditor .ptitle{font-size:12px;color:var(--muted);margin-bottom:6px}
+#settings .peditor textarea{width:100%;min-height:150px}
+#settings .peditor .prow{display:flex;gap:8px;margin-top:8px;align-items:center}
+#settings .peditor .prow .sp{flex:1}
 #termwrap{position:fixed;z-index:9;background:#111;display:none;flex-direction:column}
 #termwrap.open{display:flex}
 #termwrap.bottom{left:0;right:0;bottom:0;height:var(--termh,42vh);border-top:2px solid var(--rule)}
@@ -531,7 +537,12 @@ function renderPresets(){
   box.innerHTML=presetsAvail.map(p=>`<label class="preset ${sel.has(p.name)?'on':''}">
     <input type="checkbox" data-preset="${p.name}" ${sel.has(p.name)?'checked':''}>
     <span class="pmeta"><div class="pl">${p.label}</div><div class="pt">${p.name}.md</div></span>
-    <span class="src">${p.source}</span></label>`).join("");
+    <span class="src">${p.source}</span>
+    <button class="pedit" data-editp="${p.name}" data-editsrc="${p.source}">편집</button></label>`).join("");
+  box.querySelectorAll("[data-editp]").forEach(b=>b.onclick=(ev)=>{
+    ev.preventDefault(); ev.stopPropagation();  // don't toggle the checkbox
+    openPresetEditor(b.dataset.editp, b.dataset.editsrc);
+  });
   box.querySelectorAll("[data-preset]").forEach(cb=>cb.onchange=async()=>{
     const names=[...box.querySelectorAll("[data-preset]:checked")].map(x=>x.dataset.preset);
     if(curScope==="file") selFile=names; else selDir=names;
@@ -539,6 +550,37 @@ function renderPresets(){
       body:JSON.stringify({file:FILE||null,scope:curScope,names})});
     renderPresets();
   });
+}
+async function reloadPresets(){
+  const c=await (await fetch("/api/config"+FQ)).json();
+  presetsAvail=c.presets_available||[]; selDir=c.presets_dir||[]; selFile=c.presets_file||null;
+  renderPresets();
+}
+async function openPresetEditor(name, source){
+  const r=await fetch(`/api/presets/get?name=${encodeURIComponent(name)}&source=${source}`);
+  const d=await r.json(); if(!d.ok){ alert(d.error); return; }
+  document.querySelectorAll("#settings .peditor").forEach(x=>x.remove());
+  const box=document.getElementById("cfg-presets");
+  const ed=document.createElement("div"); ed.className="peditor";
+  ed.innerHTML=`<div class="ptitle"><b>${name}.md</b> · ${source}</div>
+    <textarea></textarea>
+    <div class="prow"><button class="del" style="color:var(--err)">삭제</button><span class="sp"></span>
+      <button class="cancel">취소</button><button class="save primary">저장</button></div>`;
+  ed.querySelector("textarea").value=d.text;
+  box.parentNode.insertBefore(ed, box.nextSibling);
+  ed.querySelector("textarea").focus();
+  ed.querySelector(".cancel").onclick=()=>ed.remove();
+  ed.querySelector(".save").onclick=async()=>{
+    await fetch("/api/presets/save",{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({name,source,text:ed.querySelector("textarea").value})});
+    ed.remove(); await reloadPresets(); showToast("프리셋 저장됨: "+name);
+  };
+  ed.querySelector(".del").onclick=async()=>{
+    if(!confirm(`프리셋 ${name} 삭제?`)) return;
+    await fetch("/api/presets/delete",{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({name,source})});
+    ed.remove(); await reloadPresets(); showToast("삭제됨: "+name);
+  };
 }
 function stashScope(){
   const v={agent:document.getElementById("cfg-agent").value,
@@ -596,8 +638,7 @@ document.getElementById("cfg-newpreset").onclick=async()=>{
   const j=await r.json();
   if(!j.ok){ alert(j.error); return; }
   document.getElementById("cfg-newpreset-name").value="";
-  const cc=await (await fetch("/api/config"+FQ)).json();
-  presetsAvail=cc.presets_available||[]; renderPresets(); showToast("프리셋 저장: "+j.name);
+  await reloadPresets(); showToast("프리셋 저장: "+j.name);
 };
 document.getElementById("cfg-save").onclick=async()=>{
   await fetch("/api/config",{method:"POST",headers:{"Content-Type":"application/json"},

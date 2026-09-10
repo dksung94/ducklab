@@ -650,6 +650,34 @@ def create_app(root: Path, initial: str | None = None, host: str = "127.0.0.1",
         save_dir_config(s.file.parent, cur)
         return {"ok": True}
 
+    def _preset_path(name: str, source: str) -> Path:
+        base = GLOBAL_PROMPTS if source == "global" else (hub.root / PROMPTS_SUBDIR)
+        return base / f"{name}.md"
+
+    @app.get("/api/presets/get")
+    async def api_presets_get(name: str, source: str = "workspace"):
+        f = _preset_path(name, source)
+        if not f.exists():
+            return {"ok": False, "error": "not found"}
+        return {"ok": True, "name": name, "source": source, "text": f.read_text()}
+
+    @app.post("/api/presets/save")
+    async def api_presets_save(body: dict):
+        name = str(body.get("name", "")).strip()
+        source = body.get("source", "workspace")
+        f = _preset_path(name, source)
+        if not f.exists():
+            return {"ok": False, "error": f"{name} 없음"}
+        f.write_text(str(body.get("text", "")))
+        return {"ok": True, "name": name, "source": source}
+
+    @app.post("/api/presets/delete")
+    async def api_presets_delete(body: dict):
+        f = _preset_path(str(body.get("name", "")).strip(), body.get("source", "workspace"))
+        if f.exists():
+            f.unlink()
+        return {"ok": True}
+
     @app.post("/api/presets/new")
     async def api_presets_new(body: dict):
         name = "".join(c for c in str(body.get("name", "")).strip()
@@ -677,7 +705,8 @@ def create_app(root: Path, initial: str | None = None, host: str = "127.0.0.1",
                         "presets": dir_cfg.get("presets") or []},
                 "file_override": over,
                 "presets_available": [{"name": pp["name"], "label": pp["label"],
-                                       "source": pp["source"]} for pp in list_presets(hub.root)],
+                                       "source": pp["source"], "text": pp["text"]}
+                                      for pp in list_presets(hub.root)],
                 "presets_dir": dir_cfg.get("presets") or [],
                 "presets_file": (over or {}).get("presets") if over and "presets" in over else None,
                 "agent": eff.get("agent", ""), "prompt_template": eff.get("prompt_template", ""),

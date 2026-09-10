@@ -9,3 +9,5 @@ build/
 _outputs/
 .DS_Store
 .ducklab.json
+temp.py
+examples/scratch*.py
