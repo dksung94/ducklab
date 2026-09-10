@@ -67,6 +67,10 @@ notebook."*
 - **In-browser editing** — CodeMirror per cell (⌘/Ctrl+Enter = save & run); saves
   rewrite only that cell's span on disk, markers preserved, so browser edits and
   agent edits are the same code path: *the file is the truth*.
+- **Per-file Python env** — pick the interpreter from a picker (auto-discovered
+  `.venv`s + manual paths); kernels launch on that venv's own interpreter via an
+  explicit KernelSpec, and ipykernel is provisioned with `uv` if the venv lacks
+  it — no preinstall, no kernelspec registration.
 - **Real terminal** — xterm + pty, resizable, dockable bottom or **side-by-side**.
 - **Workspace browser** — every `.py` in the tree, new-file creation, kernel badges.
 - **Syntax highlight** (Dracula in dark), dark/light theme, mobile-friendly
@@ -112,9 +116,7 @@ anything.
 Working today: everything above (M0–M2 of the
 [requirements](docs/0001-requirements.md)). Next:
 
-- **uv environment resolution** — pick the interpreter per file/project
-  (PEP 723 inline deps → `pyproject`/`.venv` → picker), kernels launched via
-  `uv run --with ipykernel` so no venv needs ipykernel preinstalled
+- PEP 723 inline-deps auto-resolution (the manual picker exists today)
 - output persistence across server restarts
 - kernel idle timeout (manual stop exists)
 

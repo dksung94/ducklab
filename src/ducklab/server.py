@@ -16,7 +16,10 @@ import asyncio
 import json
 import os
 import shlex
+import shutil
+import functools
 import subprocess
+import sys as _sys
 import tempfile
 import threading
 import time
@@ -85,6 +88,31 @@ def save_dir_config(dirpath: Path, cfg: dict) -> None:
     (dirpath / ".ducklab.json").write_text(json.dumps(cfg, indent=2, ensure_ascii=False) + "\n")
 
 
+@functools.lru_cache(maxsize=64)
+def _pyver(python: str) -> str:
+    try:
+        return subprocess.check_output([python, "-V"], text=True, timeout=5).strip()
+    except Exception:
+        return "?"
+
+
+def _as_python(path: Path) -> Path | None:
+    """A path to an env dir or interpreter -> the interpreter, if it exists."""
+    if path.is_dir():
+        for cand in (path / "bin" / "python", path / ".venv" / "bin" / "python"):
+            if cand.exists():
+                return cand
+        return None
+    return path if path.exists() else None
+
+
+def effective_env(dirpath: Path, filename: str) -> str | None:
+    """Per-file env override, else directory env, else None (server default)."""
+    cfg = load_dir_config(dirpath)
+    over = (cfg.get("files") or {}).get(filename) or {}
+    return over.get("env") or cfg.get("env") or None
+
+
 def effective_config(dirpath: Path, filename: str) -> tuple[dict, bool]:
     """Directory defaults with a per-file override layered on top.
     Returns (effective, has_file_override)."""
@@ -120,9 +148,10 @@ def build_term_cmd(cfg: dict, file: Path, rel: str, host: str, port: int) -> str
 class Session:
     """One open file: kernel, parsed cells, kept outputs, connected clients."""
 
-    def __init__(self, file: Path, rel: str):
+    def __init__(self, file: Path, rel: str, python: str | None = None):
         self.file = file
         self.rel = rel
+        self.python = python          # interpreter for this file's kernel (None = server's)
         self.kernel: FileKernel | None = None
         self.cells = parse_cells(file.read_text())
         self.outputs: dict[str, list[dict]] = {}
@@ -150,7 +179,7 @@ class Session:
 
     def ensure_kernel(self) -> FileKernel:
         if self.kernel is None:
-            self.kernel = FileKernel()
+            self.kernel = FileKernel(self.python) if self.python else FileKernel()
         return self.kernel
 
     def run_cell_blocking(self, cell_id: str):
@@ -232,7 +261,8 @@ class Hub:
     def session(self, rel: str | None) -> Session:
         rel = self.resolve(rel)
         if rel not in self.sessions:
-            s = Session(self.root / rel, rel)
+            file = self.root / rel
+            s = Session(file, rel, python=effective_env(file.parent, file.name))
             s.loop = self.loop
             self.sessions[rel] = s
         return self.sessions[rel]
@@ -382,6 +412,76 @@ def create_app(root: Path, initial: str | None = None, host: str = "127.0.0.1",
             await asyncio.get_running_loop().run_in_executor(s.executor, s.kernel.restart)
         await s.send_all({"type": "status", "state": "restarted"})
         return {"ok": True, "file": s.rel}
+
+    @app.get("/api/envs")
+    async def api_envs():
+        """Known interpreters: server default + auto-discovered .venvs + manual."""
+        envs: dict[str, dict] = {}
+        def add(python: Path | None, source: str, label: str | None = None):
+            if python is None:
+                return
+            key = str(python)
+            if key not in envs:
+                envs[key] = {"python": key, "source": source,
+                             "label": label or key.replace(str(Path.home()), "~"),
+                             "version": _pyver(key)}
+        add(Path(_sys.executable), "default", "ducklab server")
+        add(_as_python(hub.root / ".venv"), "auto", f"{hub.root.name}/.venv")
+        for d in sorted(hub.root.iterdir()):
+            if d.is_dir() and not d.name.startswith(".") and d.name not in SKIP_DIRS:
+                add(_as_python(d / ".venv"), "auto", f"{d.name}/.venv")
+        for p in load_global_config().get("envs", []):
+            add(_as_python(Path(p).expanduser()), "manual")
+        return {"envs": list(envs.values())}
+
+    @app.post("/api/envs/add")
+    async def api_envs_add(body: dict):
+        raw = str(body.get("path", "")).strip()
+        py = _as_python(Path(raw).expanduser())
+        if py is None:
+            return {"ok": False, "error": f"no interpreter at {raw!r} (dir with bin/python or a python path)"}
+        g = load_global_config()
+        lst = g.get("envs", [])
+        if str(py) not in lst:
+            lst.append(str(py))
+        g["envs"] = lst
+        save_global_config(g)
+        return {"ok": True, "python": str(py), "version": _pyver(str(py))}
+
+    @app.get("/api/env")
+    async def api_env_get(file: str | None = None):
+        s = hub.session(file)
+        return {"file": s.rel, "python": s.python, "version": _pyver(s.python) if s.python else _pyver(_sys.executable),
+                "is_default": s.python is None, "kernel_alive": s.kernel is not None}
+
+    @app.post("/api/env")
+    async def api_env_set(body: dict):
+        s = hub.session(body.get("file"))
+        python = body.get("python") or None   # None/"" = server default
+        if python:
+            py = _as_python(Path(python).expanduser())
+            if py is None:
+                return {"ok": False, "error": f"no interpreter at {python!r}"}
+            python = str(py)
+        cur = load_dir_config(s.file.parent)
+        files = cur.get("files") or {}
+        over = files.get(s.file.name) or {}
+        if python:
+            over["env"] = python
+        else:
+            over.pop("env", None)
+        if over:
+            files[s.file.name] = over
+        else:
+            files.pop(s.file.name, None)
+        cur["files"] = files
+        save_dir_config(s.file.parent, cur)
+        s.python = python
+        if s.kernel:  # restart on next run with the new interpreter
+            await asyncio.get_running_loop().run_in_executor(s.executor, s.kernel.shutdown)
+            s.kernel = None
+        await s.send_all({"type": "status", "state": "env_changed"})
+        return {"ok": True, "python": python, "note": "kernel stopped; next run uses the new env"}
 
     @app.get("/api/config")
     async def api_config_get(file: str | None = None):

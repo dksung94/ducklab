@@ -2,14 +2,17 @@
 
 The kernel is a stock IPython kernel driven over the Jupyter protocol via
 jupyter_client; outputs come back tagged with the request's msg_id, which the
-caller maps to a cell. Environment resolution (uv, PEP 723) lands post-M0 —
-M0 launches the kernel on a chosen interpreter (default: the server's own).
+caller maps to a cell. The kernel launches on a chosen interpreter (default:
+the server's own) via an explicit in-memory KernelSpec — no kernelspec is ever
+registered, and ipykernel is provisioned into a foreign venv with uv on demand.
 """
 
 from __future__ import annotations
 
 import queue
 import re
+import shutil
+import subprocess
 import sys
 import threading
 from dataclasses import dataclass, field
@@ -18,6 +21,7 @@ from typing import Callable
 import time
 
 from jupyter_client import KernelManager
+from jupyter_client.kernelspec import KernelSpec
 
 _ANSI = re.compile(r"\x1b\[[0-9;]*m")
 
@@ -33,8 +37,26 @@ class FileKernel:
     python: str = field(default_factory=lambda: sys.executable)
 
     def __post_init__(self):
-        self.km = KernelManager()
-        self.km.kernel_cmd = [self.python, "-m", "ipykernel_launcher", "-f", "{connection_file}"]
+        if self.python != sys.executable:
+            # Foreign env: run its OWN interpreter so its site-packages are the
+            # kernel's world. If ipykernel is missing there, provision it via uv.
+            have = subprocess.run([self.python, "-c", "import ipykernel"],
+                                  capture_output=True).returncode == 0
+            if not have:
+                uv = shutil.which("uv")
+                if not uv:
+                    raise RuntimeError(
+                        f"ipykernel not installed in {self.python} and uv not found; "
+                        f"run: {self.python} -m pip install ipykernel")
+                subprocess.run([uv, "pip", "install", "--python", self.python, "ipykernel"],
+                               check=True, capture_output=True)
+        # kernel_cmd is ignored by modern jupyter_client; pin the interpreter by
+        # giving the manager an explicit in-memory KernelSpec (argv wins over any
+        # installed kernelspec, so no registration is ever needed)
+        self.km = KernelManager(kernel_name="ducklab")
+        self.km._kernel_spec = KernelSpec(
+            argv=[self.python, "-m", "ipykernel_launcher", "-f", "{connection_file}"],
+            display_name="ducklab", language="python")
         self.km.start_kernel()
         self.kc = self.km.client()
         self.kc.start_channels()

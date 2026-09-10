@@ -54,6 +54,23 @@ pre.code{margin:0;padding:12px 14px;background:var(--code);font-family:ui-monosp
 .askbar input:focus{outline:2px solid var(--accent);outline-offset:-1px}
 .askbar button{flex:none;padding:6px 13px;font-size:12.5px}
 .askbar .hint{flex:none;font-size:10.5px;color:var(--faint)}
+#envchip{font-family:ui-monospace,Menlo,monospace;font-size:11.5px;padding:4px 10px}
+#envmodal{position:fixed;inset:0;z-index:22;display:none;align-items:center;justify-content:center;background:rgba(0,0,0,.45)}
+#envmodal.open{display:flex}
+#envmodal .panel{background:var(--card);border:1px solid var(--rule);border-radius:14px;width:min(560px,94vw);
+ max-height:80vh;overflow:auto;padding:18px 20px}
+#envmodal h3{margin:0 0 4px;font-size:15px}
+#envmodal .hint{font-size:12px;color:var(--muted);margin:0 0 12px}
+#envmodal .erow{display:flex;gap:9px;align-items:center;padding:8px 10px;border:1px solid var(--rule);
+ border-radius:9px;margin:6px 0;cursor:pointer}
+#envmodal .erow:hover{background:var(--code)}
+#envmodal .erow.on{border-color:var(--accent);background:color-mix(in srgb,var(--accent) 10%,transparent)}
+#envmodal .erow .nm{flex:1;font-family:ui-monospace,Menlo,monospace;font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#envmodal .erow .vv{font-size:11px;color:var(--muted);flex:none}
+#envmodal .erow .src{font-size:10px;color:var(--faint);flex:none;border:1px solid var(--rule);border-radius:5px;padding:1px 6px}
+#envmodal .addrow{display:flex;gap:8px;margin-top:12px}
+#envmodal .addrow input{flex:1;font:12px ui-monospace,Menlo,monospace;color:var(--ink);background:var(--code);
+ border:1px solid var(--rule);border-radius:8px;padding:7px 10px;min-width:0}
 #toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);z-index:30;background:var(--ink);color:var(--bg);
  font-size:13px;padding:8px 16px;border-radius:9px;opacity:0;transition:opacity .2s;pointer-events:none}
 #toast.on{opacity:.92}
@@ -127,6 +144,7 @@ body.termopen-right{padding-right:var(--termw,40vw)}
   <div class="name" id="fname">ducklab</div>
   <button id="runall" class="primary">Run All</button>
   <button id="restart">Restart</button>
+  <button id="envchip" title="python environment">env</button>
   <button id="termtoggle">Terminal</button>
   <button id="settingsbtn" title="settings">⚙</button>
 </div>
@@ -306,6 +324,61 @@ function sendAsk(c){
   }
   inp.value=""; toggleAsk(c.id, false);
 }
+
+// ---- python env picker ----
+const envmodal=document.createElement("div"); envmodal.id="envmodal";
+envmodal.innerHTML=`<div class="panel">
+  <h3>Python environment <span style="font-weight:400;color:var(--muted)" id="env-forfile"></span></h3>
+  <p class="hint">이 파일의 커널이 쓸 인터프리터. 변경하면 커널이 내려가고 <b>다음 실행부터</b> 새 환경으로 뜹니다.
+     (uv가 있으면 ipykernel 미설치 venv도 바로 사용 가능)</p>
+  <div id="envlist"></div>
+  <div class="addrow">
+    <input id="env-addpath" type="text" placeholder="환경 추가 — venv 디렉터리 또는 python 경로 (~/proj/.venv)">
+    <button id="env-add">추가</button>
+  </div>
+</div>`;
+document.body.appendChild(envmodal);
+envmodal.addEventListener("click",e=>{ if(e.target===envmodal) envmodal.classList.remove("open"); });
+let curEnv=null;
+async function refreshEnvChip(){
+  const r=await fetch("/api/env"+FQ); const e=await r.json();
+  curEnv=e.python;
+  const v=(e.version||"").replace("Python ","py");
+  const nm=e.is_default?"server":(e.python.split("/").slice(-3,-2)[0]||"env");
+  document.getElementById("envchip").textContent=`⬡ ${nm} · ${v}`;
+}
+async function openEnvModal(){
+  document.getElementById("env-forfile").textContent="— "+(FILE||document.getElementById("fname").textContent);
+  const r=await fetch("/api/envs"); const d=await r.json();
+  const box=document.getElementById("envlist");
+  box.innerHTML=d.envs.map(e=>{
+    const on=(curEnv===e.python)||(curEnv===null&&e.source==="default");
+    return `<div class="erow ${on?'on':''}" data-py="${e.source==='default'?'':e.python}">
+      <span class="nm">${e.label}</span><span class="vv">${(e.version||'').replace('Python ','py')}</span>
+      <span class="src">${e.source}</span></div>`;}).join("");
+  box.querySelectorAll(".erow").forEach(row=>row.onclick=async()=>{
+    const py=row.dataset.py||null;
+    const res=await fetch("/api/env",{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({file:FILE||null,python:py})});
+    const j=await res.json();
+    if(!j.ok){ alert(j.error); return; }
+    envmodal.classList.remove("open");
+    showToast("환경 변경됨 — 다음 실행부터 적용");
+    refreshEnvChip();
+  });
+  envmodal.classList.add("open");
+}
+document.getElementById("envchip").onclick=openEnvModal;
+document.getElementById("env-add").onclick=async()=>{
+  const p=document.getElementById("env-addpath").value.trim(); if(!p) return;
+  const r=await fetch("/api/envs/add",{method:"POST",headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({path:p})});
+  const j=await r.json();
+  if(!j.ok){ alert(j.error); return; }
+  document.getElementById("env-addpath").value="";
+  showToast("추가됨: "+j.version); openEnvModal();
+};
+refreshEnvChip();
 
 // ---- files drawer ----
 const drawer=document.createElement("div"); drawer.id="drawer";
