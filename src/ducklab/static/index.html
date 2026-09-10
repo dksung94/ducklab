@@ -74,7 +74,9 @@ kbd{font:11.5px ui-monospace,Menlo,monospace;background:var(--code);border:1px s
  font-weight:600;pointer-events:none}
 .chead .saved.on{opacity:1}
 .chead .runbadge{font-size:10.5px;color:var(--muted);font-family:ui-monospace,Menlo,monospace;flex:none}
-#memchip{font-size:11px;color:var(--muted);font-family:ui-monospace,Menlo,monospace;padding:0 4px;white-space:nowrap}
+#memchip{font-size:11px;color:var(--muted);font-family:ui-monospace,Menlo,monospace;white-space:nowrap;
+ border:1px solid var(--rule);border-radius:999px;padding:3px 10px;display:none}
+#memchip.on{display:inline-block}
 #runbar{position:fixed;top:0;left:0;height:3px;background:var(--accent);width:0;z-index:30;
  transition:width .25s ease;box-shadow:0 0 8px var(--accent);display:none}
 #runbar.on{display:block}
@@ -285,7 +287,7 @@ function handle(m){
       if(m.state==="idle"){
         const rb=el.querySelector(".runbadge");
         if(rb && m.elapsed!=null) rb.textContent = m.elapsed<1 ? Math.round(m.elapsed*1000)+"ms" : m.elapsed+"s";
-        if(m.mem!=null){ document.getElementById("memchip").textContent = "RAM "+m.mem+"MB"; }
+        if(m.mem!=null){ const c=document.getElementById("memchip"); c.textContent="🧠 "+m.mem+"MB"; c.classList.add("on"); }
         if(runAll.active){ runAll.done++; updateRunbar(); }
       }
     }
@@ -521,6 +523,18 @@ document.addEventListener("click",()=>document.querySelectorAll(".cellmenu.open"
 document.getElementById("runall").onclick = () => send({type:"run_all"});
 document.getElementById("restart").onclick = () => { if(confirm("Restart kernel? All state is lost.")) send({type:"restart"}); };
 document.getElementById("clearall").onclick = () => { send({type:"clear_all"}); showToast("출력 전체 지움","실행취소",()=>send({type:"undo"})); };
+async function pollMem(){
+  try{
+    const d=await (await fetch("/api/kernels")).json();
+    const rel=FILE || document.getElementById("fname").textContent;
+    const k=d.kernels.find(x=>x.file===rel);
+    const chip=document.getElementById("memchip");
+    if(k && k.alive){ chip.textContent="🧠 "+(k.rss_mb??"?")+"MB"; chip.title="이 파일 커널 메모리 · pid "+k.pid; chip.classList.add("on"); }
+    else { chip.textContent="🧠 커널 없음"; chip.title="아직 실행 전 — 첫 실행 시 커널 시작"; chip.classList.add("on"); }
+  }catch(_){}
+}
+setInterval(()=>{ if(!document.hidden) pollMem(); }, 3000);
+pollMem();
 connect();
 
 // ---- inline cell editor (CodeMirror) ----
