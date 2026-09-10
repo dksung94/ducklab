@@ -80,13 +80,19 @@ pre.code{margin:0;padding:12px 14px;background:var(--code);font-family:ui-monosp
 #settings textarea{min-height:180px;resize:vertical;line-height:1.5}
 #settings .row{display:flex;gap:8px;margin-top:16px;align-items:center}
 #settings .row .sp{flex:1;font-size:11px;color:var(--muted)}
-#termwrap{position:fixed;left:0;right:0;bottom:0;z-index:9;background:#111;border-top:2px solid var(--rule);
- height:42vh;display:none;flex-direction:column}
+#termwrap{position:fixed;z-index:9;background:#111;display:none;flex-direction:column}
 #termwrap.open{display:flex}
-#termbar{display:flex;align-items:center;gap:8px;padding:4px 10px;background:#181818;color:#aaa;font-size:12px}
+#termwrap.bottom{left:0;right:0;bottom:0;height:var(--termh,42vh);border-top:2px solid var(--rule)}
+#termwrap.right{top:0;right:0;bottom:0;width:var(--termw,40vw);border-left:2px solid var(--rule)}
+#termbar{display:flex;align-items:center;gap:8px;padding:4px 10px;background:#181818;color:#aaa;font-size:12px;flex:none}
 #termbar .sp{flex:1}
-#term{flex:1;min-height:0;padding:2px 4px}
-body.termopen .wrap{padding-bottom:calc(42vh + 60px)}
+#termbar button{padding:2px 8px;font-size:11px}
+#term{flex:1;min-height:0;min-width:0;padding:2px 4px}
+#termgrip{position:absolute;z-index:10;touch-action:none}
+#termwrap.bottom #termgrip{left:0;right:0;top:-5px;height:10px;cursor:ns-resize}
+#termwrap.right #termgrip{top:0;bottom:0;left:-5px;width:10px;cursor:ew-resize}
+body.termopen-bottom .wrap{padding-bottom:calc(var(--termh,42vh) + 60px)}
+body.termopen-right{padding-right:var(--termw,40vw)}
 </style></head><body>
 <div class="top">
   <button id="filesbtn" title="files">☰</button>
@@ -334,10 +340,23 @@ document.getElementById("cfg-save").onclick=async()=>{
 // ---- terminal (xterm + pty over ws) ----
 let term=null, tws=null, fit=null;
 const termwrap=document.createElement("div"); termwrap.id="termwrap";
-termwrap.innerHTML='<div id="termbar"><span>terminal</span><span class="sp"></span><button id="termclose">×</button></div><div id="term"></div>';
+termwrap.innerHTML='<div id="termgrip"></div><div id="termbar"><span>terminal</span><span class="sp"></span>'+
+  '<button id="termdock" title="dock">⇥ 우측</button><button id="termclose">×</button></div><div id="term"></div>';
 document.body.appendChild(termwrap);
+let dock = localStorage.ducklab_dock || "bottom";
+function applyDock(){
+  termwrap.classList.remove("bottom","right"); termwrap.classList.add(dock);
+  document.body.classList.remove("termopen-bottom","termopen-right");
+  if(termwrap.classList.contains("open"))
+    document.body.classList.add(dock==="bottom"?"termopen-bottom":"termopen-right");
+  const h=localStorage.ducklab_termh, w=localStorage.ducklab_termw;
+  if(h) document.documentElement.style.setProperty("--termh", h+"px");
+  if(w) document.documentElement.style.setProperty("--termw", w+"px");
+  document.getElementById("termdock").textContent = dock==="bottom" ? "⇥ 우측" : "⇩ 하단";
+  if(fit) requestAnimationFrame(()=>fit.fit());
+}
 function openTerm(){
-  termwrap.classList.add("open"); document.body.classList.add("termopen");
+  termwrap.classList.add("open"); applyDock();
   if(term){ fit.fit(); term.focus(); return; }
   term=new Terminal({fontSize:13,fontFamily:"Menlo,monospace",theme:{background:"#111"}});
   fit=new FitAddon.FitAddon(); term.loadAddon(fit);
@@ -351,9 +370,33 @@ function openTerm(){
   window.addEventListener("resize",()=>{ if(termwrap.classList.contains("open")) fit.fit(); });
   term.focus();
 }
-function closeTerm(){ termwrap.classList.remove("open"); document.body.classList.remove("termopen"); }
+function closeTerm(){ termwrap.classList.remove("open");
+  document.body.classList.remove("termopen-bottom","termopen-right"); }
 document.getElementById("termtoggle").onclick=()=>termwrap.classList.contains("open")?closeTerm():openTerm();
-termwrap.addEventListener("click",(e)=>{ if(e.target.id==="termclose") closeTerm(); });
+termwrap.addEventListener("click",(e)=>{
+  if(e.target.id==="termclose") closeTerm();
+  else if(e.target.id==="termdock"){ dock = dock==="bottom" ? "right" : "bottom";
+    localStorage.ducklab_dock = dock; applyDock(); }
+});
+// drag-resize (pointer events: mouse + touch)
+const grip=document.getElementById("termgrip");
+grip.addEventListener("pointerdown",(e)=>{
+  e.preventDefault(); grip.setPointerCapture(e.pointerId);
+  const move=(ev)=>{
+    if(dock==="bottom"){
+      const px=Math.min(Math.max(window.innerHeight-ev.clientY,120), window.innerHeight-120);
+      localStorage.ducklab_termh=px|0;
+      document.documentElement.style.setProperty("--termh",(px|0)+"px");
+    }else{
+      const px=Math.min(Math.max(window.innerWidth-ev.clientX,280), window.innerWidth-320);
+      localStorage.ducklab_termw=px|0;
+      document.documentElement.style.setProperty("--termw",(px|0)+"px");
+    }
+    if(fit) requestAnimationFrame(()=>fit.fit());
+  };
+  const up=()=>{ grip.removeEventListener("pointermove",move); grip.removeEventListener("pointerup",up); };
+  grip.addEventListener("pointermove",move); grip.addEventListener("pointerup",up);
+});
 </script>
 <script src="/static/vendor/codemirror.js"></script>
 <script src="/static/vendor/cm-python.js"></script>
