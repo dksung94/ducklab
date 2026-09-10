@@ -108,6 +108,17 @@ pre.code{margin:0;padding:12px 14px;background:var(--code);font-family:ui-monosp
  white-space:pre-wrap;word-break:break-word;overflow-x:auto}
 .out pre.err{color:var(--err);border-left:3px solid var(--err);padding-left:10px}
 .out img{max-width:100%;border-radius:8px;margin:8px 0;display:block;background:#fff}
+.out .rich{overflow-x:auto;margin:6px 0}
+.out .rich table{border-collapse:collapse;font-size:12px;font-variant-numeric:tabular-nums}
+.out .rich td,.out .rich th{border:1px solid var(--rule);padding:3px 9px;text-align:right;white-space:nowrap}
+.out .rich th{color:var(--muted);font-weight:600}
+.mdrender{display:none;padding:6px 16px 12px;line-height:1.6}
+.mdrender h1{font-size:20px;margin:.5em 0 .3em}.mdrender h2{font-size:17px;margin:.5em 0 .3em}.mdrender h3{font-size:15px;margin:.5em 0 .3em}
+.mdrender p{margin:.4em 0}.mdrender li{margin-left:1.3em}.mdrender code{background:var(--code);padding:1px 5px;border-radius:5px;font-family:ui-monospace,Menlo,monospace;font-size:.9em}
+.mdrender pre{background:var(--code);padding:10px 12px;border-radius:8px;overflow-x:auto}
+.cell.mdcell pre.code,.cell.mdcell .askbar,.cell.mdcell .outbar,.cell.mdcell .out,.cell.mdcell [data-run],.cell.mdcell [data-ask]{display:none}
+.cell.mdcell .mdrender{display:block}
+.cell.mdcell.editing .mdrender{display:none}
 .spin{font-size:11px;color:var(--busy);padding:0 12px 8px;display:none}
 .cell.busy .spin{display:block}
 .askbar{display:none;gap:8px;padding:8px 12px;border-top:1px solid var(--rule);align-items:center;background:var(--code)}
@@ -243,6 +254,7 @@ body.termopen-right{padding-right:var(--termw,40vw)}
   <div id="topmenu">
     <button data-top="restart">↻ Restart kernel</button>
     <button data-top="clearall">⌫ Clear all outputs</button>
+    <button data-top="export">⭳ Export HTML</button>
   </div>
 </div>
 <div id="runbar"></div>
@@ -384,6 +396,7 @@ function render(cells){
         <button data-op="insert-above">↑ Insert above</button>
         <button data-op="insert-below">↓ Insert below</button>
         <button data-op="duplicate">⧉ Duplicate</button>
+        <button data-op="md-below">＋ Markdown below</button>
         <div class="sep"></div>
         <button data-op="up">▲ Move up</button>
         <button data-op="down">▼ Move down</button>
@@ -392,6 +405,7 @@ function render(cells){
         <button data-op="delete" class="danger">🗑 Delete</button>
       </div>
       <pre class="code"></pre>
+      <div class="mdrender"></div>
       <div class="askbar">
         <input type="text" placeholder="Ask the AI about this cell… (Enter = send to terminal, Esc = close)">
         <span class="hint">→ terminal</span>
@@ -410,6 +424,7 @@ function render(cells){
       <div class="qspin">queued… (starts when the cell ahead finishes)</div>
       <div class="outbar" id="outbar-${c.id}"><button data-copy="${c.id}">copy</button><button data-expand="${c.id}">expand</button></div>
       <div class="out" id="out-${c.id}"></div>`;
+    if(c.kind==="markdown"){ d.classList.add("mdcell"); d.querySelector(".mdrender").innerHTML = mdToHtml(c.source); }
     const pc = d.querySelector("pre.code"); pc.dataset.src = c.source; paintCode(pc, c.source);
     d.querySelector("[data-run]").onclick = () => send({type:"run", cell:c.id});
     d.querySelector("[data-stop]").onclick = () => send({type:"interrupt"});
@@ -436,7 +451,7 @@ function render(cells){
     else if(c.status==="error") d.classList.add("err");
     if(c.stale) d.classList.add("stale");
     d.querySelector("[data-copy]").onclick=(ev)=>{ ev.stopPropagation();
-      const txt=(outputs[c.id]||[]).filter(o=>o.kind!=="image").map(o=>o.data).join("");
+      const txt=(outputs[c.id]||[]).filter(o=>o.kind!=="image").map(o=>o.kind==="html"?(o.text||""):o.data).join("");
       navigator.clipboard && navigator.clipboard.writeText(txt); showToast("Output copied"); };
     d.querySelector("[data-expand]").onclick=(ev)=>{ ev.stopPropagation();
       const out=d.querySelector(".out"); const on=out.classList.toggle("expanded");
@@ -445,12 +460,32 @@ function render(cells){
     paintOut(c.id);
   }
   const add=document.createElement("div"); add.id="addcell";
-  add.innerHTML='<button title="Add a cell at the end (b)"><span class="plus">+</span> Add cell</button>';
-  add.querySelector("button").onclick=()=>send({type:"insert",cell:"",where:"below"});
+  add.innerHTML='<button data-addcode title="Add a code cell (b)"><span class="plus">+</span> Add cell</button>'
+    +'<button data-addmd title="Add a markdown cell" style="margin-left:8px">+ Markdown</button>';
+  add.querySelector("[data-addcode]").onclick=()=>send({type:"insert",cell:"",where:"below"});
+  add.querySelector("[data-addmd]").onclick=()=>send({type:"insert",cell:"",where:"below",markdown:true});
   $cells.appendChild(add);
   applySel();
 }
 
+function mdToHtml(src){
+  const esc=s=>s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+  const inline=s=>esc(s).replace(/`([^`]+)`/g,"<code>$1</code>")
+     .replace(/\*\*([^*]+)\*\*/g,"<b>$1</b>").replace(/\*([^*]+)\*/g,"<i>$1</i>")
+     .replace(/\[([^\]]+)\]\(([^)]+)\)/g,'<a href="$2" target="_blank">$1</a>');
+  const lines=src.split("\n"); let out=[], inList=false, inCode=false, code=[];
+  for(const ln of lines){
+    if(ln.trim().startsWith("```")){ if(inCode){ out.push("<pre>"+esc(code.join("\n"))+"</pre>"); code=[]; inCode=false; } else inCode=true; continue; }
+    if(inCode){ code.push(ln); continue; }
+    const m=ln.match(/^(#{1,3})\s+(.*)/);
+    if(m){ if(inList){out.push("</ul>");inList=false;} out.push("<h"+m[1].length+">"+inline(m[2])+"</h"+m[1].length+">"); }
+    else if(ln.trim().startsWith("- ")){ if(!inList){out.push("<ul>");inList=true;} out.push("<li>"+inline(ln.trim().slice(2))+"</li>"); }
+    else if(ln.trim()===""){ if(inList){out.push("</ul>");inList=false;} }
+    else { if(inList){out.push("</ul>");inList=false;} out.push("<p>"+inline(ln)+"</p>"); }
+  }
+  if(inList) out.push("</ul>"); if(inCode) out.push("<pre>"+esc(code.join("\n"))+"</pre>");
+  return out.join("");
+}
 function paintOut(id){
   const box = document.getElementById("out-"+id);
   if(!box) return;
@@ -464,6 +499,7 @@ function paintOut(id){
     if(o.kind==="stream"){ (textBuf = textBuf || []).push(o.data); continue; }
     flush();
     if(o.kind==="image"){ const img=document.createElement("img"); img.src="data:image/png;base64,"+o.data; box.appendChild(img); }
+    else if(o.kind==="html"){ const dv=document.createElement("div"); dv.className="rich"; dv.innerHTML=o.data; box.appendChild(dv); }
     else { const p=document.createElement("pre"); if(o.kind==="error") p.className="err"; p.textContent=o.data; box.appendChild(p); }
   }
   flush();
@@ -556,6 +592,7 @@ document.getElementById("helpbtn").onclick=()=>toggleHelp();
 function cellOp(op, c){
   if(op==="insert-above") send({type:"insert",cell:c.id,where:"above"});
   else if(op==="insert-below") send({type:"insert",cell:c.id,where:"below"});
+  else if(op==="md-below") send({type:"insert",cell:c.id,where:"below",markdown:true});
   else if(op==="duplicate") send({type:"duplicate",cell:c.id});
   else if(op==="up") send({type:"move",cell:c.id,delta:-1});
   else if(op==="down") send({type:"move",cell:c.id,delta:1});
@@ -570,6 +607,7 @@ document.getElementById("topmenubtn").onclick=(ev)=>{ ev.stopPropagation(); topm
 topmenu.querySelectorAll("[data-top]").forEach(b=>b.onclick=()=>{
   topmenu.classList.remove("open");
   if(b.dataset.top==="restart"){ if(confirm("Restart kernel? All state is lost.")) send({type:"restart"}); }
+  else if(b.dataset.top==="export"){ window.location = "/api/export"+FQ; }
   else { send({type:"clear_all"}); showToast("All outputs cleared","Undo",()=>send({type:"undo"})); }
 });
 document.addEventListener("click",()=>topmenu.classList.remove("open"));
@@ -595,7 +633,7 @@ function openEditor(c){
   card.classList.add("editing");
   const ti = card.querySelector(".celltitle");
   ti.value = c.title || "";
-  ti.style.display = (c.marker===false) ? "none" : "block";  // preamble has no marker line
+  ti.style.display = (c.marker===false || c.kind==="markdown") ? "none" : "block";
   ti.onkeydown = (ev)=>{ if(ev.key==="Escape") closeEditor(c.id); };
   const cm = CodeMirror(card.querySelector(".cm-holder"), {
     value: c.source, mode: "python", lineNumbers: true, indentUnit: 4,

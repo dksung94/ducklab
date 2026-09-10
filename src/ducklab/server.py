@@ -19,6 +19,8 @@ import os
 import shlex
 import shutil
 import functools
+import hashlib
+import html as _html
 import subprocess
 import sys as _sys
 import tempfile
@@ -35,13 +37,14 @@ from fastapi.staticfiles import StaticFiles
 from ptyprocess import PtyProcessUnicode
 from watchfiles import awatch
 
-from .cells import (delete_cell, duplicate_cell, insert_cell, move_cell,
-                    parse_cells, replace_cell, replace_cell_source)
+from .cells import (comment_md, delete_cell, duplicate_cell, insert_cell, move_cell,
+                    parse_cells, replace_cell, replace_cell_source, uncomment_md)
 from .kernel import FileKernel
 
 STATIC = Path(__file__).parent / "static"
 GLOBAL_CONFIG = Path.home() / ".ducklab.json"
 GLOBAL_PROMPTS = Path.home() / ".ducklab" / "prompts"
+GLOBAL_OUTPUTS = Path.home() / ".ducklab" / "outputs"
 PROMPTS_SUBDIR = ".ducklab/prompts"
 SKIP_DIRS = {".venv", "venv", "node_modules", "__pycache__", ".git", ".ipynb_checkpoints"}
 
@@ -247,10 +250,34 @@ class Session:
         self.run_count = 0
         self.run_status: dict[str, str] = {}   # cell id -> "ok" | "error"
         self.ran_source: dict[str, str] = {}   # cell id -> source at last run
+        self._store = GLOBAL_OUTPUTS / (hashlib.sha1(str(file.resolve()).encode()).hexdigest() + ".json")
+        self._load_outputs()
         # one worker thread per session: runs are FIFO-ordered and the kernel
         # is only ever created/used from this thread (no creation race)
         self.executor = ThreadPoolExecutor(max_workers=1)
         self.undo_stack = deque(maxlen=25)   # destructive-op snapshots
+
+    def _load_outputs(self):
+        """Restore last-run outputs/status so a server restart doesn't lose them."""
+        if not self._store.exists():
+            return
+        try:
+            d = json.loads(self._store.read_text())
+        except Exception:
+            return
+        live = {c.id for c in self.cells}
+        self.outputs = {k: v for k, v in d.get("outputs", {}).items() if k in live}
+        self.run_status = {k: v for k, v in d.get("run_status", {}).items() if k in live}
+        self.ran_source = {k: v for k, v in d.get("ran_source", {}).items() if k in live}
+
+    def save_outputs(self):
+        try:
+            GLOBAL_OUTPUTS.mkdir(parents=True, exist_ok=True)
+            self._store.write_text(json.dumps(
+                {"outputs": self.outputs, "run_status": self.run_status,
+                 "ran_source": self.ran_source}))
+        except Exception:
+            pass
 
     async def send_all(self, msg: dict):
         dead = []
@@ -281,7 +308,7 @@ class Session:
 
     def run_cell_blocking(self, cell_id: str):
         cell = next((c for c in self.cells if c.id == cell_id), None)
-        if cell is None:
+        if cell is None or cell.kind == "markdown":
             return
         self.outputs[cell_id] = []
         self.send_threadsafe({"type": "clear", "cell": cell_id})
@@ -309,6 +336,7 @@ class Session:
                                   "elapsed": round(time.time() - t0, 2),
                                   "status": self.run_status[cell_id],
                                   "mem": rss_mb(self.kernel.pid if self.kernel else None)})
+            self.save_outputs()
 
     def reparse(self):
         self.cells = parse_cells(self.file.read_text())
@@ -329,6 +357,9 @@ class Session:
         vision-capable agent can Read (see) the plot."""
         out, i = [], 0
         for o in self.outputs.get(cell_id, []):
+            if o["kind"] == "html":
+                out.append({"kind": "result", "data": o.get("text", "")})
+                continue
             if o["kind"] == "image":
                 if images == "files":
                     d = Path(tempfile.gettempdir()) / "ducklab-img"
@@ -346,9 +377,11 @@ class Session:
 
     def cells_msg(self) -> dict:
         return {"type": "cells", "file": self.rel,
-                "cells": [{"id": c.id, "idx": c.idx, "title": c.title,
-                           "source": c.source, "lineno": c.lineno,
-                           "marker": c.marker_line >= 0,
+                "cells": [{"id": c.id, "idx": c.idx,
+                           "title": "" if c.kind == "markdown" else c.title,
+                           "kind": c.kind,
+                           "source": uncomment_md(c.source) if c.kind == "markdown" else c.source,
+                           "lineno": c.lineno, "marker": c.marker_line >= 0,
                            "status": self.run_status.get(c.id),
                            "stale": c.id in self.ran_source and self.ran_source[c.id] != c.source}
                           for c in self.cells]}
@@ -528,6 +561,55 @@ def create_app(root: Path, initial: str | None = None, host: str = "127.0.0.1",
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text(f"# %% {p.stem}\n\n")
         return {"ok": True, "file": str(p.relative_to(hub.root))}
+
+    @app.get("/api/export")
+    async def api_export(file: str | None = None):
+        """A standalone HTML report of the file: cells + their current outputs
+        (markdown rendered, code highlighted-plain, images inlined)."""
+        s = hub.session(file)
+        def esc(x): return _html.escape(x or "")
+        def md(text):
+            out = []
+            for ln in text.splitlines():
+                st = ln.strip()
+                if st.startswith("### "): out.append(f"<h3>{esc(st[4:])}</h3>")
+                elif st.startswith("## "): out.append(f"<h2>{esc(st[3:])}</h2>")
+                elif st.startswith("# "): out.append(f"<h1>{esc(st[2:])}</h1>")
+                elif st.startswith("- "): out.append(f"<li>{esc(st[2:])}</li>")
+                elif st == "": out.append("")
+                else: out.append(f"<p>{esc(ln)}</p>")
+            return "\n".join(out)
+        parts = []
+        for c in s.cells:
+            if c.kind == "markdown":
+                parts.append(f'<div class="md">{md(uncomment_md(c.source))}</div>')
+                continue
+            parts.append(f'<div class="cell"><pre class="code">{esc(c.source)}</pre>')
+            for o in s.outputs.get(c.id, []):
+                k = o["kind"]
+                if k == "image":
+                    parts.append(f'<img src="data:image/png;base64,{o["data"]}">')
+                elif k == "html":
+                    parts.append(f'<div class="rich">{o["data"]}</div>')
+                elif k == "error":
+                    parts.append(f'<pre class="err">{esc(o["data"])}</pre>')
+                else:
+                    parts.append(f'<pre class="out">{esc(o.get("data",""))}</pre>')
+            parts.append("</div>")
+        doc = f"""<!doctype html><meta charset=utf-8><title>{esc(s.rel)}</title>
+<style>body{{max-width:900px;margin:24px auto;padding:0 16px;font:15px/1.6 -apple-system,system-ui,sans-serif;color:#1c1e21}}
+.md h1,.md h2,.md h3{{margin:.6em 0 .3em}} .md li{{margin-left:1.2em}}
+.cell{{margin:14px 0;border:1px solid #e3e0d8;border-radius:10px;overflow:hidden}}
+pre.code{{margin:0;padding:12px 14px;background:#f0eee8;font:12.5px ui-monospace,Menlo,monospace;overflow-x:auto}}
+pre.out,pre.err{{margin:0;padding:8px 14px;font:12px ui-monospace,Menlo,monospace;white-space:pre-wrap}}
+pre.err{{color:#a6392f;border-left:3px solid #a6392f}}
+.rich{{padding:8px 14px;overflow-x:auto}} .rich table{{border-collapse:collapse;font-size:12.5px}}
+.rich td,.rich th{{border:1px solid #ddd;padding:3px 8px}}
+img{{max-width:100%;display:block;margin:8px 14px;background:#fff}}</style>
+<h1 style="border:0">{esc(s.rel)}</h1>
+{''.join(parts)}"""
+        return HTMLResponse(doc, headers={
+            "Content-Disposition": f'attachment; filename="{Path(s.rel).stem}.html"'})
 
     @app.get("/api/cells")
     async def api_cells(file: str | None = None):
@@ -841,9 +923,11 @@ def create_app(root: Path, initial: str | None = None, host: str = "127.0.0.1",
                     # AI's file edit are the same path — the file is the truth
                     try:
                         old = next(c for c in session.cells if c.id == msg["cell"])
+                        src, title = msg["source"], msg.get("title")
+                        if old.kind == "markdown":
+                            src, title = comment_md(src), "[markdown]"
                         new_text = replace_cell(
-                            session.file.read_text(), msg["cell"], msg["source"],
-                            msg.get("title"))
+                            session.file.read_text(), msg["cell"], src, title)
                     except (KeyError, StopIteration):
                         await ws.send_text(json.dumps(
                             {"type": "edit_rejected", "cell": msg["cell"],
@@ -859,7 +943,8 @@ def create_app(root: Path, initial: str | None = None, host: str = "127.0.0.1",
                 elif msg["type"] == "insert":
                     try:
                         new_text = insert_cell(session.file.read_text(),
-                                               msg.get("cell") or "", msg.get("where", "below"))
+                                               msg.get("cell") or "", msg.get("where", "below"),
+                                               title="[markdown]" if msg.get("markdown") else "")
                     except KeyError:
                         continue
                     session.file.write_text(new_text)
@@ -886,6 +971,7 @@ def create_app(root: Path, initial: str | None = None, host: str = "127.0.0.1",
                     old = session.outputs.pop(msg["cell"], None)
                     if old:
                         session.undo_stack.append({"kind": "outputs", "outputs": {msg["cell"]: old}})
+                    session.save_outputs()
                     await session.send_all({"type": "clear", "cell": msg["cell"]})
                 elif msg["type"] == "clear_all":
                     if session.outputs:
@@ -893,6 +979,7 @@ def create_app(root: Path, initial: str | None = None, host: str = "127.0.0.1",
                             {"kind": "outputs",
                              "outputs": {k: list(v) for k, v in session.outputs.items()}})
                     session.outputs.clear()
+                    session.save_outputs()
                     await session.send_all({"type": "clear_all"})
                 elif msg["type"] == "undo":
                     if not session.undo_stack:
@@ -910,6 +997,7 @@ def create_app(root: Path, initial: str | None = None, host: str = "127.0.0.1",
                     else:
                         for cid, arr in e["outputs"].items():
                             session.outputs[cid] = arr
+                        session.save_outputs()
                         await session.send_all({"type": "restore_outputs", "outputs": e["outputs"]})
                         await session.send_all({"type": "toast", "text": "Outputs restored"})
                 elif msg["type"] == "restart":

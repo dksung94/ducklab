@@ -24,6 +24,7 @@ class Cell:
     src_begin: int = 0   # 0-based line index where the cell's source starts
     src_end: int = 0     # 0-based exclusive end (next marker or EOF)
     marker_line: int = -1  # 0-based line of this cell's "# %%" (-1 = implicit preamble)
+    kind: str = "code"     # "code" | "markdown" (# %% [markdown])
 
 
 def parse_cells(text: str) -> list[Cell]:
@@ -50,9 +51,10 @@ def parse_cells(text: str) -> list[Cell]:
         h = hashlib.sha1(source.encode()).hexdigest()[:8]
         occ = seen.get(h, 0)
         seen[h] = occ + 1
+        kind = "markdown" if title.replace(" ", "").startswith("[markdown]") else "code"
         cells.append(Cell(id=f"{h}-{occ}", idx=len(cells), title=title,
                           source=source, lineno=begin + 1,
-                          src_begin=begin, src_end=end, marker_line=mark_i))
+                          src_begin=begin, src_end=end, marker_line=mark_i, kind=kind))
     return cells
 
 
@@ -160,3 +162,24 @@ def duplicate_cell(text: str, cell_id: str) -> str:
     blocks.insert(i + 1, copy)
     out = [l for blk in blocks for l in blk]
     return "\n".join(out) + ("\n" if text.endswith("\n") else "")
+
+
+def uncomment_md(source: str) -> str:
+    """'# text' comment lines -> plain markdown for display/editing."""
+    out = []
+    for ln in source.splitlines():
+        if ln.startswith("# "):
+            out.append(ln[2:])
+        elif ln == "#":
+            out.append("")
+        else:
+            out.append(ln)
+    return "\n".join(out)
+
+
+def comment_md(text: str) -> str:
+    """Plain markdown -> '# ...' comment lines so the file stays valid Python."""
+    out = []
+    for ln in text.splitlines():
+        out.append("#" if ln == "" else "# " + ln)
+    return "\n".join(out)

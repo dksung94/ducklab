@@ -25,7 +25,7 @@ from jupyter_client.kernelspec import KernelSpec
 
 _ANSI = re.compile(r"\x1b\[[0-9;]*m")
 
-Output = dict  # {"kind": "stream"|"result"|"image"|"error", "data": str}
+Output = dict  # {"kind": "stream"|"result"|"image"|"html"|"error", "data": str}
 
 
 def _strip_ansi(s: str) -> str:
@@ -96,6 +96,10 @@ class FileKernel:
                     data = c.get("data", {})
                     if "image/png" in data:
                         on_output({"kind": "image", "data": data["image/png"]})
+                    elif "text/html" in data:
+                        # rich repr (e.g. a DataFrame): render html, keep text for the API
+                        on_output({"kind": "html", "data": data["text/html"],
+                                   "text": data.get("text/plain", "")})
                     elif "text/plain" in data:
                         on_output({"kind": "result", "data": data["text/plain"]})
                 elif t == "error":
