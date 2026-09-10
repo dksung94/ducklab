@@ -96,7 +96,7 @@ class Session:
                            "source": c.source, "lineno": c.lineno} for c in self.cells]}
 
 
-def create_app(file: Path) -> FastAPI:
+def create_app(file: Path, term_cmd: str | None = "claude") -> FastAPI:
     app = FastAPI()
     session = Session(file)
     app.mount("/static", StaticFiles(directory=STATIC), name="static")
@@ -170,6 +170,10 @@ def create_app(file: Path) -> FastAPI:
         shell = os.environ.get("SHELL", "/bin/bash")
         pty = PtyProcessUnicode.spawn(
             [shell, "-l"], dimensions=(24, 80), cwd=str(session.file.parent))
+        if term_cmd:
+            # auto-start the pairing AI (or any command); typed into the shell
+            # so it is visible, and the shell remains after it exits
+            pty.write(term_cmd + "\n")
 
         def reader():
             while True:
@@ -203,12 +207,14 @@ def main():
     ap.add_argument("file", help="the .py file to serve (one file = one analysis = one kernel)")
     ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--port", type=int, default=8787)
+    ap.add_argument("--term-cmd", default="claude",
+                    help='command auto-typed when a terminal opens (default: claude; "" disables)')
     args = ap.parse_args()
     file = Path(args.file).resolve()
     if not file.exists():
         raise SystemExit(f"no such file: {file}")
     print(f"ducklab · {file} · http://{args.host}:{args.port}")
-    uvicorn.run(create_app(file), host=args.host, port=args.port, log_level="warning")
+    uvicorn.run(create_app(file, term_cmd=args.term_cmd or None), host=args.host, port=args.port, log_level="warning")
 
 
 if __name__ == "__main__":
