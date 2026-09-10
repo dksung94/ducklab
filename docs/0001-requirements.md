@@ -52,11 +52,14 @@
     전제는 §5.7 — Tailscale `serve`(≠`funnel`) + 앱 인증 + Origin 검증이 켤 때 Must.
 13. **반응형 UI (모바일)**: 폰에서 셀·시각화가 잘 보이고 스크롤/실행이 편해야 함. 폰은
     **관찰 우선**(읽기·실행·결과 확인)이고 본격 편집은 데스크톱 — §5.8 UX 참조.
+14. **환경 관리 (uv 1급)**: 파일→환경 자동 해석(PEP 723 인라인 deps → 프로젝트
+    `pyproject`/`.venv` → 명시 선택), `uv run --with ipykernel`로 kernelspec·사전 설치
+    없이 커널 기동 — §5.9.
 
 ### Could
-14. 실시간 다중 커서 협업(여러 사람 동시 편집).
-15. 변수 탐색기·실행 히스토리·프로파일.
-16. 셀 의존 그래프 기반 반응형 재실행(marimo식) — 기본은 명시 실행.
+15. 실시간 다중 커서 협업(여러 사람 동시 편집).
+16. 변수 탐색기·실행 히스토리·프로파일.
+17. 셀 의존 그래프 기반 반응형 재실행(marimo식) — 기본은 명시 실행.
 
 ### Won't (초기)
 - 클라우드 호스팅/멀티테넌시.
@@ -126,6 +129,29 @@ ducklab은 웹 터미널(pty) + 커널 = **사실상 원격 코드 실행(RCE)**
   라이브로 결과를 보는 S1 시나리오가 모바일의 주 용도.
 - 구현: 단일 반응형 프론트(뷰포트 브레이크포인트) — 별도 앱 없이 같은 웹.
 
+## 5.9 파이썬 환경 관리 — uv 1급
+
+파일당 커널이므로 핵심은 "파일 → 환경" 매핑. 주피터식 kernelspec(각 venv에 ipykernel
+수동 설치·등록, 목록 부패)은 쓰지 않는다.
+
+**해석 순서 (파일 열 때 자동):**
+1. **PEP 723 인라인 메타데이터** — 파일 상단 `# /// script` deps 블록이 있으면 uv가
+   임시 환경으로 실행. "파일=1분석"과 정합(분석이 의존성까지 self-contained).
+2. **프로젝트 환경** — 파일 위치에서 상위로 `pyproject.toml`/`uv.lock` 탐색 → 그
+   프로젝트 `.venv`(uv sync 상태). 일반 케이스.
+3. **명시 선택** — UI 환경 피커(자동 발견: 프로젝트 `.venv`들·conda·pyenv). 선택은
+   `.ducklab.toml`에 기억, 파일별 오버라이드는 매직 코멘트(`# ducklab: env=...`).
+
+**커널 기동 (ipykernel 사전 설치 불필요):**
+```
+uv run --python <env> --with ipykernel python -m ipykernel_launcher -f conn.json
+```
+`--with ipykernel`이 대상 env를 오염시키지 않는 오버레이로 주입(uv 캐시로 빠름) —
+어떤 venv든 등록·설치 없이 즉시 커널. kernelspec 개념 제거.
+
+**UI**: 파일 헤더에 환경 배지(env 이름·py 버전) + 피커. 환경 변경 = 커널 재시작(경고).
+uv 부재 시 fallback: env 내 ipykernel 요구(전통 방식).
+
 ## 6. 아키텍처 (초안)
 
 ```
@@ -162,6 +188,6 @@ M3  AI 트리거·페어      run 엔드포인트, 편집 충돌 처리, (선택
 
 ## 9. 기술 후보
 
-- 백엔드: Python + FastAPI, `jupyter_client`(커널), `watchfiles`(파일워치), `ptyprocess`(pty).
+- 백엔드: Python + FastAPI, `jupyter_client`(커널), `watchfiles`(파일워치), `ptyprocess`(pty), `uv`(환경 해석·커널 기동).
 - 프론트: CodeMirror 6(에디터), xterm.js(터미널), 경량 렌더러(표·img·ansi).
 - 배포: 단일 CLI `duck lab` (pip 설치), 로컬 셀프호스트.
