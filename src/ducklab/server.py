@@ -13,6 +13,7 @@ import argparse
 import asyncio
 import json
 import os
+import shlex
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -94,6 +95,20 @@ class Session:
         return {"type": "cells", "file": self.file.name,
                 "cells": [{"id": c.id, "idx": c.idx, "title": c.title,
                            "source": c.source, "lineno": c.lineno} for c in self.cells]}
+
+
+def default_term_cmd(file: Path, host: str, port: int) -> str:
+    """Launch the pairing AI with context: which file this session serves and
+    what its role is, so the agent doesn't start blind."""
+    prompt = (
+        f"ducklab pairing session. The file {file} is being served as live "
+        f"notebook cells at http://{host}:{port} — every edit you make to it "
+        "re-renders in the browser instantly (cells are split by '# %%'). "
+        "You are the researcher pairing on this file: read it first, keep the "
+        "'# %%' cell structure when editing, and prefer small incremental "
+        "edits so the human can follow along live."
+    )
+    return f"claude {shlex.quote(prompt)}"
 
 
 def create_app(file: Path, term_cmd: str | None = "claude") -> FastAPI:
@@ -207,14 +222,19 @@ def main():
     ap.add_argument("file", help="the .py file to serve (one file = one analysis = one kernel)")
     ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--port", type=int, default=8787)
-    ap.add_argument("--term-cmd", default="claude",
-                    help='command auto-typed when a terminal opens (default: claude; "" disables)')
+    ap.add_argument("--term-cmd", default=None,
+                    help='command auto-typed when a terminal opens '
+                         '(default: claude with file context; "" disables)')
     args = ap.parse_args()
     file = Path(args.file).resolve()
     if not file.exists():
         raise SystemExit(f"no such file: {file}")
+    if args.term_cmd is None:
+        term_cmd = default_term_cmd(file, args.host, args.port)
+    else:
+        term_cmd = args.term_cmd or None
     print(f"ducklab · {file} · http://{args.host}:{args.port}")
-    uvicorn.run(create_app(file, term_cmd=args.term_cmd or None), host=args.host, port=args.port, log_level="warning")
+    uvicorn.run(create_app(file, term_cmd=term_cmd), host=args.host, port=args.port, log_level="warning")
 
 
 if __name__ == "__main__":
