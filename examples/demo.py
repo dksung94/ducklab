@@ -50,3 +50,8 @@ plt.pie(sales, labels=fruits, autopct="%1.0f%%", startangle=90,
 plt.title("weekly fruit sales share")
 plt.tight_layout()
 plt.show()
+# %% ㅁㄴㅇㄹㄴ
+a = 1
+
+# %%
+
