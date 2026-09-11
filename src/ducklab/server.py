@@ -467,8 +467,15 @@ class TermSession:
         return self.pty.isalive()
 
     def close(self):
+        # graceful first (SIGHUP/INT/TERM) so the agent can persist its session
+        # — Claude/Codex need this to be resumable via --continue — then force.
         try:
-            self.pty.terminate(force=True)
+            self.pty.terminate(force=False)
+        except Exception:
+            pass
+        try:
+            if self.pty.isalive():
+                self.pty.terminate(force=True)
         except Exception:
             pass
 
