@@ -149,13 +149,19 @@ def effective_config(dirpath: Path, filename: str) -> tuple[dict, bool]:
 
 
 _RESUME_CMD = {"claude": "claude --continue", "codex": "codex resume --last"}
+_RESUME_LIST_CMD = {"claude": "claude --resume", "codex": "codex resume"}
 
 
 def resume_command(agent: str, cfg: dict) -> str:
-    """The command to resume the agent's previous session; cfg['resume_cmd']
-    overrides, else a known default, else a best-effort '--continue'."""
+    """Resume the most recent session; cfg['resume_cmd'] overrides."""
     rc = (cfg.get("resume_cmd") or "").strip()
     return rc or _RESUME_CMD.get(agent, f"{agent} --continue")
+
+
+def resume_list_command(agent: str, cfg: dict) -> str:
+    """Open the agent's session picker; cfg['resume_list_cmd'] overrides."""
+    rc = (cfg.get("resume_list_cmd") or "").strip()
+    return rc or _RESUME_LIST_CMD.get(agent, f"{agent} --resume")
 
 
 def build_term_parts(cfg: dict, file: Path, rel: str, host: str, port: int) -> tuple[str, str | None] | None:
@@ -1063,15 +1069,17 @@ img{{max-width:100%;display:block;margin:8px 14px;background:#fff}}</style>
         except WebSocketDisconnect:
             session.clients.discard(ws)
 
-    def _term_launch(session: Session, resume: bool = False) -> str | None:
+    def _term_launch(session: Session, resume: str | None = None) -> str | None:
         eff, _ = effective_config(session.file.parent, session.file.name)
         if term_cmd_override is not None:
             return term_cmd_override or None
         agent = (eff.get("agent") or "").strip()
         if not agent:
             return None
+        if resume == "list":
+            return resume_list_command(agent, eff)  # interactive session picker
         if resume:
-            return resume_command(agent, eff)   # resume already carries context; no prompt
+            return resume_command(agent, eff)   # most recent; no prompt injected
         prompt = compose_prompt_text(hub.root, eff, session.file.parent,
                                      session.file.name, session.file, session.rel, host, port)
         if not prompt:
@@ -1113,7 +1121,8 @@ img{{max-width:100%;display:block;margin:8px 14px;background:#fff}}</style>
             return
         term = hub.terms.get(session.rel)
         if term is None or not term.alive:
-            resume = ws.query_params.get("resume") == "1"
+            rp = ws.query_params.get("resume")
+            resume = rp if rp in ("1", "list") else None
             term = TermSession(session.file.parent, _term_launch(session, resume),
                                asyncio.get_running_loop())
             hub.terms[session.rel] = term

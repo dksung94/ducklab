@@ -280,7 +280,7 @@ body.termopen-right{padding-right:var(--termw,40vw)}
   <span class="spacer"></span>
   <button id="runall" class="primary">Run All</button>
   <span class="termsplit"><button id="termtoggle">Terminal</button><button id="termopts" title="session options">▾</button></span>
-  <div id="termmenu"><button data-term="new">New session</button><button data-term="resume">Resume last session</button></div>
+  <div id="termmenu"><button data-term="new">New session</button><button data-term="resume">Resume last session</button><button data-term="list">Resume from list…</button></div>
   <button id="topmenubtn" class="iconbtn" title="More">⋯</button>
   <button id="helpbtn" class="iconbtn" title="Shortcuts (?)">?</button>
   <button id="settingsbtn" class="iconbtn" title="settings">⚙</button>
@@ -1117,7 +1117,8 @@ function openTerm(resume){
   fit=new FitAddon.FitAddon(); term.loadAddon(fit);
   try{ if(window.Unicode11Addon){ term.loadAddon(new Unicode11Addon.Unicode11Addon()); term.unicode.activeVersion="11"; } }catch(_){}
   term.open(document.getElementById("term")); fit.fit();
-  const rq = resume ? (FQ ? "&resume=1" : "?resume=1") : "";
+  const rv = resume===true ? "1" : (resume||"");   // true|"1" -> last, "list" -> picker
+  const rq = rv ? (FQ ? "&resume="+rv : "?resume="+rv) : "";
   tws=new WebSocket((location.protocol==="https:"?"wss://":"ws://")+location.host+"/ws/term"+FQ+rq);
   tws.onmessage=(e)=>term.write(e.data);
   tws.onopen=()=>tws.send(JSON.stringify({type:"resize",cols:term.cols,rows:term.rows}));
@@ -1143,7 +1144,7 @@ async function relaunchTerm(resume){
   openTerm(resume);
 }
 termmenu.querySelectorAll("[data-term]").forEach(b=>b.onclick=()=>{ termmenu.classList.remove("open");
-  relaunchTerm(b.dataset.term==="resume"); });
+  relaunchTerm(b.dataset.term==="resume" ? "1" : (b.dataset.term==="list" ? "list" : false)); });
 termwrap.addEventListener("click",async(e)=>{
   if(e.target.id==="termclose") closeTerm();
   else if(e.target.id==="termkill"){
