@@ -1095,8 +1095,9 @@ function applyDock(){
 function openTerm(){
   termwrap.classList.add("open"); applyDock();
   if(term){ fit.fit(); term.focus(); return; }
-  term=new Terminal({fontSize:13,fontFamily:"Menlo,monospace",theme:{background:"#111"}});
+  term=new Terminal({fontSize:13,fontFamily:"Menlo,monospace",theme:{background:"#111"},allowProposedApi:true});
   fit=new FitAddon.FitAddon(); term.loadAddon(fit);
+  try{ if(window.Unicode11Addon){ term.loadAddon(new Unicode11Addon.Unicode11Addon()); term.unicode.activeVersion="11"; } }catch(_){}
   term.open(document.getElementById("term")); fit.fit();
   tws=new WebSocket((location.protocol==="https:"?"wss://":"ws://")+location.host+"/ws/term"+FQ);
   tws.onmessage=(e)=>term.write(e.data);
@@ -1148,6 +1149,7 @@ grip.addEventListener("pointerdown",(e)=>{
 <script src="/static/vendor/cm-runmode.js"></script>
 <script src="/static/vendor/xterm.js"></script>
 <script src="/static/vendor/xterm-fit.js"></script>
+<script src="/static/vendor/xterm-unicode11.js"></script>
 <script>
 // cells may render before CodeMirror finished loading — repaint once ready
 document.querySelectorAll("pre.code").forEach(el=>paintCode(el, el.dataset.src||el.textContent));
