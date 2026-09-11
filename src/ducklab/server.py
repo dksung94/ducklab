@@ -148,6 +148,16 @@ def effective_config(dirpath: Path, filename: str) -> tuple[dict, bool]:
     return eff, bool(over)
 
 
+_RESUME_CMD = {"claude": "claude --continue", "codex": "codex resume --last"}
+
+
+def resume_command(agent: str, cfg: dict) -> str:
+    """The command to resume the agent's previous session; cfg['resume_cmd']
+    overrides, else a known default, else a best-effort '--continue'."""
+    rc = (cfg.get("resume_cmd") or "").strip()
+    return rc or _RESUME_CMD.get(agent, f"{agent} --continue")
+
+
 def build_term_parts(cfg: dict, file: Path, rel: str, host: str, port: int) -> tuple[str, str | None] | None:
     """(agent, rendered prompt or None); None when no agent configured."""
     agent = (cfg.get("agent") or "").strip()
@@ -869,7 +879,9 @@ img{{max-width:100%;display:block;margin:8px 14px;background:#fff}}</style>
         g = load_global_config()
         return {"dir": {"agent": dir_cfg.get("agent", "claude"),
                         "prompt_template": dir_cfg.get("prompt_template", DEFAULT_PROMPT),
-                        "presets": dir_cfg.get("presets") or []},
+                        "presets": dir_cfg.get("presets") or [],
+                        "resume_cmd": dir_cfg.get("resume_cmd", "")},
+                "resume_default": resume_command(eff.get("agent", "claude"), {}),
                 "file_override": over,
                 "presets_available": [{"name": pp["name"], "label": pp["label"],
                                        "source": pp["source"], "text": pp["text"]}
@@ -888,6 +900,7 @@ img{{max-width:100%;display:block;margin:8px 14px;background:#fff}}</style>
         s = hub.session(cfg.get("file"))
         cur = load_dir_config(s.file.parent)
         files = cur.get("files") or {}
+        rcmd = str(cfg.get("resume_cmd", "")).strip()
         if cfg.get("remove_file_override"):
             files.pop(s.file.name, None)
         elif cfg.get("scope") == "file":
@@ -895,8 +908,9 @@ img{{max-width:100%;display:block;margin:8px 14px;background:#fff}}</style>
             prompt = str(cfg.get("prompt_template", "")).strip()
             over = files.get(s.file.name) or {}
             over["agent"] = agent; over["prompt_template"] = prompt
+            over["resume_cmd"] = rcmd
             over = {k: v for k, v in over.items() if v or k == "presets"}
-            if over.get("agent") or over.get("prompt_template") or over.get("presets") or over.get("env"):
+            if any(over.get(k) for k in ("agent", "prompt_template", "presets", "env", "resume_cmd")):
                 files[s.file.name] = over
             else:  # nothing left = no override
                 files.pop(s.file.name, None)
@@ -905,11 +919,13 @@ img{{max-width:100%;display:block;margin:8px 14px;background:#fff}}</style>
             # of being frozen by an old save
             agent = str(cfg.get("agent", "claude"))
             prompt = str(cfg.get("prompt_template", DEFAULT_PROMPT))
-            cur.pop("agent", None); cur.pop("prompt_template", None)
+            cur.pop("agent", None); cur.pop("prompt_template", None); cur.pop("resume_cmd", None)
             if agent and agent != "claude":
                 cur["agent"] = agent
             if prompt.strip() and prompt != DEFAULT_PROMPT:
                 cur["prompt_template"] = prompt
+            if rcmd:
+                cur["resume_cmd"] = rcmd
         cur["files"] = files
         save_dir_config(s.file.parent, cur)
         if "workspace" in cfg:
@@ -1040,13 +1056,15 @@ img{{max-width:100%;display:block;margin:8px 14px;background:#fff}}</style>
         except WebSocketDisconnect:
             session.clients.discard(ws)
 
-    def _term_launch(session: Session) -> str | None:
+    def _term_launch(session: Session, resume: bool = False) -> str | None:
         eff, _ = effective_config(session.file.parent, session.file.name)
         if term_cmd_override is not None:
             return term_cmd_override or None
         agent = (eff.get("agent") or "").strip()
         if not agent:
             return None
+        if resume:
+            return resume_command(agent, eff)   # resume already carries context; no prompt
         prompt = compose_prompt_text(hub.root, eff, session.file.parent,
                                      session.file.name, session.file, session.rel, host, port)
         if not prompt:
@@ -1088,7 +1106,8 @@ img{{max-width:100%;display:block;margin:8px 14px;background:#fff}}</style>
             return
         term = hub.terms.get(session.rel)
         if term is None or not term.alive:
-            term = TermSession(session.file.parent, _term_launch(session),
+            resume = ws.query_params.get("resume") == "1"
+            term = TermSession(session.file.parent, _term_launch(session, resume),
                                asyncio.get_running_loop())
             hub.terms[session.rel] = term
         # replay the tail so the reloaded page shows the ongoing session

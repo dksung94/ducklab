@@ -86,6 +86,14 @@ kbd{font:11.5px ui-monospace,Menlo,monospace;background:var(--code);border:1px s
 #topmenu.open{display:block}
 #topmenu button{display:flex;width:100%;justify-content:flex-start;border:0;border-radius:7px;padding:8px 11px;font-size:12.5px;background:transparent}
 #topmenu button:hover{background:var(--code)}
+.termsplit{display:inline-flex}
+.termsplit #termtoggle{border-top-right-radius:0;border-bottom-right-radius:0}
+.termsplit #termopts{border-top-left-radius:0;border-bottom-left-radius:0;border-left:0;padding:6px 7px}
+#termmenu{position:absolute;z-index:16;background:var(--card);border:1px solid var(--rule);border-radius:10px;
+ box-shadow:0 8px 26px rgba(0,0,0,.28);padding:5px;min-width:180px;display:none}
+#termmenu.open{display:block}
+#termmenu button{display:flex;width:100%;justify-content:flex-start;border:0;border-radius:7px;padding:8px 11px;font-size:12.5px;background:transparent}
+#termmenu button:hover{background:var(--code)}
 .chead .saved{font-size:11px;color:var(--accent);opacity:0;transition:opacity .15s;flex:none;
  font-weight:600;pointer-events:none}
 .chead .saved.on{opacity:1}
@@ -271,7 +279,8 @@ body.termopen-right{padding-right:var(--termw,40vw)}
   <span id="memchip"></span>
   <span class="spacer"></span>
   <button id="runall" class="primary">Run All</button>
-  <button id="termtoggle">Terminal</button>
+  <span class="termsplit"><button id="termtoggle">Terminal</button><button id="termopts" title="session options">▾</button></span>
+  <div id="termmenu"><button data-term="new">New session</button><button data-term="resume">Resume last session</button></div>
   <button id="topmenubtn" class="iconbtn" title="More">⋯</button>
   <button id="helpbtn" class="iconbtn" title="Shortcuts (?)">?</button>
   <button id="settingsbtn" class="iconbtn" title="settings">⚙</button>
@@ -933,6 +942,8 @@ settings.innerHTML=`
     </div>
     <label>Agent command <span class="sub">— claude · codex · empty = shell only</span></label>
     <input type="text" id="cfg-agent" placeholder="claude">
+    <label>Resume command <span class="sub">— run when you pick "Resume last session" (blank = auto: claude --continue / codex resume)</span></label>
+    <input type="text" id="cfg-resume" placeholder="">
     <label>Context prompt <span class="sub">— placeholders {file} {url} {rel} · empty = launch with no prompt</span></label>
     <textarea id="cfg-prompt"></textarea>
     <label>Prompt presets <span class="sub">— imported into the prompt above · current scope: <b id="cfg-scopeword">directory</b></span></label>
@@ -950,7 +961,7 @@ settings.innerHTML=`
   </div></div>`;
 document.body.appendChild(settings);
 let cfgDefault="";
-let cfgDir={agent:"",prompt:""}, cfgFile=null, curScope="dir";
+let cfgDir={agent:"",prompt:"",resume:""}, cfgFile=null, curScope="dir", resumeDefault="";
 let presetsAvail=[], selDir=[], selFile=null;   // selFile=null → inherits dir
 function curSel(){ return curScope==="file" ? (selFile||[]) : selDir; }
 function renderPresets(){
@@ -1008,7 +1019,8 @@ async function openPresetEditor(name, source){
 }
 function stashScope(){
   const v={agent:document.getElementById("cfg-agent").value,
-           prompt:document.getElementById("cfg-prompt").value};
+           prompt:document.getElementById("cfg-prompt").value,
+           resume:document.getElementById("cfg-resume").value};
   if(curScope==="dir") cfgDir=v; else cfgFile=v;
 }
 function showScope(s){
@@ -1020,12 +1032,14 @@ function showScope(s){
   const rm=document.getElementById("cfg-remove-over");
   if(s==="dir"){
     a.value=cfgDir.agent; p.value=cfgDir.prompt;
+    document.getElementById("cfg-resume").value=cfgDir.resume||""; document.getElementById("cfg-resume").placeholder=resumeDefault;
     a.placeholder="claude"; p.placeholder="";
     note.textContent="default for all files in this directory";
     rm.style.display="none";
   }else{
-    const v=cfgFile||{agent:"",prompt:""};
+    const v=cfgFile||{agent:"",prompt:"",resume:""};
     a.value=v.agent; p.value=v.prompt;
+    document.getElementById("cfg-resume").value=v.resume||"";
     a.placeholder="(empty = use directory default)";
     p.placeholder="Per-file prompt — saving overrides the directory default. Save both empty to remove the override.";
     note.textContent=cfgFile?"override active":"no override (save to create)";
@@ -1036,8 +1050,9 @@ function showScope(s){
 async function openSettings(){
   const r=await fetch("/api/config"+FQ); const c=await r.json();
   cfgDefault=c.default_prompt||"";
-  cfgDir={agent:(c.dir&&c.dir.agent)||"", prompt:(c.dir&&c.dir.prompt_template)||""};
-  cfgFile=c.file_override?{agent:c.file_override.agent||"",prompt:c.file_override.prompt_template||""}:null;
+  cfgDir={agent:(c.dir&&c.dir.agent)||"", prompt:(c.dir&&c.dir.prompt_template)||"", resume:(c.dir&&c.dir.resume_cmd)||""};
+  cfgFile=c.file_override?{agent:c.file_override.agent||"",prompt:c.file_override.prompt_template||"",resume:c.file_override.resume_cmd||""}:null;
+  resumeDefault=c.resume_default||"";
   presetsAvail=c.presets_available||[]; selDir=c.presets_dir||[]; selFile=c.presets_file||null;
   document.getElementById("cfg-workspace").value=c.workspace||"";
   document.getElementById("cfg-note").textContent=c.overridden_by_cli?"note: --term-cmd CLI override is on, so these settings are ignored":"";
@@ -1069,6 +1084,7 @@ document.getElementById("cfg-save").onclick=async()=>{
     body:JSON.stringify({file:FILE||null,
                          scope:curScope,
                          agent:document.getElementById("cfg-agent").value,
+                         resume_cmd:document.getElementById("cfg-resume").value,
                          workspace:document.getElementById("cfg-workspace").value,
                          prompt_template:document.getElementById("cfg-prompt").value})});
   settings.classList.remove("open");
@@ -1092,7 +1108,7 @@ function applyDock(){
   document.getElementById("termdock").textContent = dock==="bottom" ? "⇥ Right" : "⇩ Bottom";
   if(fit) requestAnimationFrame(()=>fit.fit());
 }
-function openTerm(){
+function openTerm(resume){
   termwrap.classList.add("open"); applyDock();
   if(term){ fit.fit(); term.focus(); return; }
   term=new Terminal({fontSize:13,
@@ -1101,7 +1117,8 @@ function openTerm(){
   fit=new FitAddon.FitAddon(); term.loadAddon(fit);
   try{ if(window.Unicode11Addon){ term.loadAddon(new Unicode11Addon.Unicode11Addon()); term.unicode.activeVersion="11"; } }catch(_){}
   term.open(document.getElementById("term")); fit.fit();
-  tws=new WebSocket((location.protocol==="https:"?"wss://":"ws://")+location.host+"/ws/term"+FQ);
+  const rq = resume ? (FQ ? "&resume=1" : "?resume=1") : "";
+  tws=new WebSocket((location.protocol==="https:"?"wss://":"ws://")+location.host+"/ws/term"+FQ+rq);
   tws.onmessage=(e)=>term.write(e.data);
   tws.onopen=()=>tws.send(JSON.stringify({type:"resize",cols:term.cols,rows:term.rows}));
   tws.onclose=()=>term.write("\r\n[disconnected]\r\n");
@@ -1112,7 +1129,21 @@ function openTerm(){
 }
 function closeTerm(){ termwrap.classList.remove("open");
   document.body.classList.remove("termopen-bottom","termopen-right"); }
-document.getElementById("termtoggle").onclick=()=>termwrap.classList.contains("open")?closeTerm():openTerm();
+document.getElementById("termtoggle").onclick=()=>termwrap.classList.contains("open")?closeTerm():openTerm(false);
+const termmenu=document.getElementById("termmenu");
+document.getElementById("termopts").onclick=(ev)=>{ ev.stopPropagation();
+  const r=ev.target.getBoundingClientRect();
+  termmenu.style.top=(r.bottom+4)+"px"; termmenu.style.right=(window.innerWidth-r.right)+"px";
+  termmenu.classList.toggle("open"); };
+document.addEventListener("click",()=>termmenu.classList.remove("open"));
+async function relaunchTerm(resume){
+  await fetch("/api/terminals/close",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({file:FILE||null})});
+  try{ tws&&tws.close(); }catch(_){}
+  if(term){ term.dispose(); term=null; } tws=null; fit=null;
+  openTerm(resume);
+}
+termmenu.querySelectorAll("[data-term]").forEach(b=>b.onclick=()=>{ termmenu.classList.remove("open");
+  relaunchTerm(b.dataset.term==="resume"); });
 termwrap.addEventListener("click",async(e)=>{
   if(e.target.id==="termclose") closeTerm();
   else if(e.target.id==="termkill"){
