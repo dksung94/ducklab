@@ -240,6 +240,21 @@ body.report .out{border-top:0}
 #settings .seg button.on{background:var(--accent);color:var(--accent-ink)}
 #settings .scopenote{font-size:12px;color:var(--muted);margin-left:10px}
 #settings .sp{flex:1;font-size:12px;color:var(--muted)}
+#exp{position:fixed;inset:0;z-index:22;display:none;background:var(--bg)}
+#exp.open{display:flex;flex-direction:column}
+#exp .phead{display:flex;align-items:center;gap:12px;padding:12px 20px;border-bottom:1px solid var(--rule)}
+#exp .phead h3{margin:0;font-size:17px;flex:1}
+#exp .body{flex:1;overflow:auto;padding:14px 20px}
+#exp table{width:100%;border-collapse:collapse;font-size:13px}
+#exp th{text-align:left;color:var(--muted);font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.06em;padding:6px 10px;border-bottom:1px solid var(--rule)}
+#exp td{padding:7px 10px;border-bottom:1px solid var(--rule);vertical-align:top}
+#exp tr.clk{cursor:pointer} #exp tr.clk:hover{background:var(--code)}
+#exp .pill{font-size:11px;padding:1px 9px;border-radius:999px;border:1px solid var(--rule)}
+#exp .pill.ok,#exp .pill.pass{color:var(--ok);border-color:var(--ok)}
+#exp .pill.error,#exp .pill.reject,#exp .pill.fail{color:var(--err);border-color:var(--err)}
+#exp .met{font-family:ui-monospace,Menlo,monospace;font-size:12px;color:var(--muted)}
+#exp .tag{font-size:10.5px;color:var(--faint);border:1px solid var(--rule);border-radius:5px;padding:0 6px;margin-right:4px}
+#exp .empty{color:var(--muted);padding:24px 10px}
 #settings .presets{display:flex;flex-direction:column;gap:6px;margin:6px 0}
 #settings .preset{display:flex;gap:9px;align-items:flex-start;padding:9px 11px;border:1px solid var(--rule);border-radius:9px;cursor:pointer}
 #settings .preset:hover{background:var(--code)}
@@ -287,6 +302,7 @@ body.termopen-right{padding-right:var(--termw,40vw)}
   <div id="topmenu">
     <button data-top="restart">↻ Restart kernel</button>
     <button data-top="clearall">⌫ Clear all outputs</button>
+    <button data-top="experiments">🧪 Experiments</button>
     <button data-top="report">▤ Report view</button>
     <button data-top="export">⭳ Export HTML</button>
   </div>
@@ -552,6 +568,7 @@ document.addEventListener("keydown",(e)=>{
   }
   if((e.metaKey||e.ctrlKey) && (e.key==="f"||e.key==="F")){ e.preventDefault(); openFind(); }
   if(e.key==="Escape"){
+    if(exp.classList.contains("open")){ exp.classList.remove("open"); return; }
     if(findbar.classList.contains("open")){ closeFind(); return; }
     if(drawer.classList.contains("open")){ closeDrawer(); return; }
     document.querySelectorAll(".cellmenu.open,#topmenu.open").forEach(x=>x.classList.remove("open"));
@@ -648,6 +665,7 @@ document.getElementById("topmenubtn").onclick=(ev)=>{ ev.stopPropagation(); topm
 topmenu.querySelectorAll("[data-top]").forEach(b=>b.onclick=()=>{
   topmenu.classList.remove("open");
   if(b.dataset.top==="restart"){ if(confirm("Restart kernel? All state is lost.")) send({type:"restart"}); }
+  else if(b.dataset.top==="experiments"){ openExp(); }
   else if(b.dataset.top==="report"){ const on=document.body.classList.toggle("report"); localStorage.ducklab_report=on?"1":""; showToast(on?"Report view on":"Report view off"); }
   else if(b.dataset.top==="export"){ window.location = "/api/export"+FQ; }
   else { send({type:"clear_all"}); showToast("All outputs cleared","Undo",()=>send({type:"undo"})); }
@@ -888,6 +906,32 @@ drawer.addEventListener("click",async(e)=>{
   location="/?file="+encodeURIComponent(d.file);
 });
 scrim.onclick=closeDrawer;
+
+// ---- experiments panel (generic run log; forge writes to it via an adapter) ----
+const exp=document.createElement("div"); exp.id="exp";
+exp.innerHTML='<div class="phead"><h3>🧪 Experiments</h3><button id="exp-refresh">↻</button><button id="exp-close">✕ Close</button></div><div class="body" id="exp-body"></div>';
+document.body.appendChild(exp);
+function fmtMetrics(m){ if(!m) return ""; return Object.entries(m).map(([k,v])=>`${k}=${typeof v==="number"?(Math.abs(v)<100?v.toFixed(3):v.toFixed(1)):v}`).join("  "); }
+async function openExp(){
+  exp.classList.add("open");
+  const box=document.getElementById("exp-body"); box.innerHTML='<div class="empty">loading…</div>';
+  const d=await (await fetch("/api/experiments")).json();
+  if(!d.experiments.length){ box.innerHTML='<div class="empty">No experiments yet. Any project (or your own code) can append records to <code>.ducklab/experiments.jsonl</code>, or POST /api/experiments.</div>'; return; }
+  const rows=d.experiments.map(r=>{
+    const t=r.ts?new Date(r.ts*1000).toLocaleString():"";
+    const st=(r.status||"").toLowerCase();
+    const tags=(r.tags||[]).map(x=>`<span class="tag">${x}</span>`).join("");
+    return `<tr class="${r.file?'clk':''}" data-file="${r.file||''}">
+      <td style="white-space:nowrap;color:var(--muted)">${t}</td>
+      <td><b>${(r.title||r.id||'').replace(/</g,'&lt;')}</b><br>${tags}</td>
+      <td><span class="pill ${st}">${r.status||''}</span></td>
+      <td class="met">${fmtMetrics(r.metrics).replace(/</g,'&lt;')}</td></tr>`;
+  }).join("");
+  box.innerHTML=`<table><thead><tr><th>time</th><th>run</th><th>status</th><th>metrics</th></tr></thead><tbody>${rows}</tbody></table>`;
+  box.querySelectorAll("tr.clk").forEach(tr=>tr.onclick=()=>{ const f=tr.dataset.file; if(f) location="/?file="+encodeURIComponent(f); });
+}
+document.getElementById("exp-close").onclick=()=>exp.classList.remove("open");
+document.getElementById("exp-refresh").onclick=openExp;
 
 // ---- find in notebook (Cmd/Ctrl+F) ----
 const findbar=document.createElement("div"); findbar.id="findbar";

@@ -119,6 +119,30 @@ curl -s  localhost:8787/api/kernels                           # who's alive, whi
 Runs share the same per-file FIFO queue and kernel as the browser — when the agent
 runs a cell, the human sees the output stream in live.
 
+## Project boundary (ducklab is standalone)
+
+ducklab is a **generic** notebook/pair-research environment — it knows nothing about
+any specific research domain. Tools like [quant-forge](https://github.com/very-berry-latte/quant-forge)
+run *inside* ducklab and depend on it; **the dependency is one-way (forge → ducklab)**
+and ducklab never imports them. ducklab owns a few generic contracts; producers conform:
+
+- **Cells**: `# %%` percent format.
+- **Config**: `.ducklab.json` (agent, prompt, presets, env).
+- **API**: the HTTP/WS surface (`/api/cells`, `/api/run`, …).
+- **Experiment log**: `.ducklab/experiments.jsonl` — one JSON record per line,
+  `{id, title, status, metrics{}, tags[], file, ts}`. The **Experiments** panel (top ⋯
+  menu) renders them without knowing their meaning. Append your own from a notebook:
+
+  ```bash
+  curl -sX POST localhost:8787/api/experiments -H 'Content-Type: application/json' \
+    -d '{"title":"run 12","status":"ok","metrics":{"sharpe":1.2},"tags":["exp"]}'
+  ```
+
+  Producers that regenerate a whole set write a per-producer file
+  `.ducklab/experiments.<name>.jsonl` (ducklab merges all of them), so they don't
+  clobber your ad-hoc log. A solo user gets an experiment history for free; a project
+  like forge surfaces its ledger through the same panel via a thin adapter.
+
 ## Security
 
 The terminal + kernel are **arbitrary code execution**. ducklab binds to

@@ -47,8 +47,10 @@ GLOBAL_CONFIG = Path.home() / ".ducklab.json"
 GLOBAL_PROMPTS = Path.home() / ".ducklab" / "prompts"
 GLOBAL_OUTPUTS = Path.home() / ".ducklab" / "outputs"
 GLOBAL_SESSIONS = Path.home() / ".ducklab" / "sessions.json"
+EXPERIMENTS_REL = ".ducklab/experiments.jsonl"   # generic run log; any producer appends
 PROMPTS_SUBDIR = ".ducklab/prompts"
 SKIP_DIRS = {".venv", "venv", "node_modules", "__pycache__", ".git", ".ipynb_checkpoints"}
+KERNEL_MEM_CAP_GB = float(os.environ.get("DUCKLAB_KERNEL_MEM_GB", "16"))  # 0 = off
 
 
 def rss_mb(pid) -> float | None:
@@ -573,6 +575,28 @@ def create_app(root: Path, initial: str | None = None, host: str = "127.0.0.1",
         for s in hub.sessions.values():
             s.loop = hub.loop
         asyncio.create_task(_watch())
+        asyncio.create_task(_mem_watchdog())
+
+    async def _mem_watchdog():
+        """A kernel that eats all RAM would OOM-kill the whole machine (and this
+        server) — so cap it: if a kernel's RSS exceeds DUCKLAB_KERNEL_MEM_GB, kill
+        it and tell the client. The server survives; the notebook can restart."""
+        cap_mb = KERNEL_MEM_CAP_GB * 1024
+        if cap_mb <= 0:
+            return
+        while True:
+            await asyncio.sleep(3)
+            for rel, s in list(hub.sessions.items()):
+                k = s.kernel
+                if not k:
+                    continue
+                mb = rss_mb(getattr(k, "pid", None))
+                if mb and mb > cap_mb:
+                    await asyncio.get_running_loop().run_in_executor(s.executor, k.shutdown)
+                    s.kernel = None
+                    await s.send_all({"type": "toast",
+                        "text": f"Kernel stopped: exceeded {KERNEL_MEM_CAP_GB:.0f}GB ({mb:.0f}MB)"})
+                    await s.send_all({"type": "status", "state": "stopped"})
 
     async def _watch():
         async for changes in awatch(hub.root):
@@ -977,6 +1001,42 @@ img{{max-width:100%;display:block;margin:8px 14px;background:#fff}}</style>
             g["workspace"] = str(cfg["workspace"]).strip()
             save_global_config(g)
         return {"ok": True, "applies": "next terminal opened; workspace on next launch"}
+
+    @app.get("/api/experiments")
+    async def api_experiments():
+        """Generic experiment/run log — tool-agnostic. Reads JSONL records
+        {id,title,status,metrics{},tags[],file,ts} from <workspace>/.ducklab/
+        experiments.jsonl (+ the global one). ducklab renders them without
+        knowing their meaning; any project (forge, or your own scripts) appends."""
+        recs = []
+        files = [hub.root / EXPERIMENTS_REL, Path.home() / EXPERIMENTS_REL]
+        # per-producer logs (e.g. experiments.forge.jsonl) so producers don't clobber
+        for d in (hub.root / ".ducklab", Path.home() / ".ducklab"):
+            if d.is_dir():
+                files += sorted(d.glob("experiments.*.jsonl"))
+        for base in files:
+            if base.exists():
+                for line in base.read_text().splitlines():
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        recs.append(json.loads(line))
+                    except Exception:
+                        pass
+        recs.sort(key=lambda r: r.get("ts", 0), reverse=True)
+        return {"experiments": recs[:500]}
+
+    @app.post("/api/experiments")
+    async def api_experiments_add(rec: dict):
+        """Append one run record to the workspace log (id/ts filled if absent)."""
+        rec.setdefault("id", _uuid.uuid4().hex[:12])
+        rec.setdefault("ts", time.time())
+        f = hub.root / EXPERIMENTS_REL
+        f.parent.mkdir(parents=True, exist_ok=True)
+        with f.open("a") as fh:
+            fh.write(json.dumps(rec, ensure_ascii=False) + "\n")
+        return {"ok": True, "id": rec["id"]}
 
     # ---- websockets -------------------------------------------------------
     @app.websocket("/ws")
