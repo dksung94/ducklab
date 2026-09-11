@@ -25,6 +25,7 @@ import subprocess
 import sys as _sys
 import tempfile
 import threading
+import uuid as _uuid
 import time
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor
@@ -45,6 +46,7 @@ STATIC = Path(__file__).parent / "static"
 GLOBAL_CONFIG = Path.home() / ".ducklab.json"
 GLOBAL_PROMPTS = Path.home() / ".ducklab" / "prompts"
 GLOBAL_OUTPUTS = Path.home() / ".ducklab" / "outputs"
+GLOBAL_SESSIONS = Path.home() / ".ducklab" / "sessions.json"
 PROMPTS_SUBDIR = ".ducklab/prompts"
 SKIP_DIRS = {".venv", "venv", "node_modules", "__pycache__", ".git", ".ipynb_checkpoints"}
 
@@ -162,6 +164,35 @@ def resume_list_command(agent: str, cfg: dict) -> str:
     """Open the agent's session picker; cfg['resume_list_cmd'] overrides."""
     rc = (cfg.get("resume_list_cmd") or "").strip()
     return rc or _RESUME_LIST_CMD.get(agent, f"{agent} --resume")
+
+
+def _is_claude(agent: str) -> bool:
+    parts = agent.split()
+    return bool(parts) and parts[0].split("/")[-1] == "claude"
+
+
+def _load_sessions() -> dict:
+    try:
+        return json.loads(GLOBAL_SESSIONS.read_text())
+    except Exception:
+        return {}
+
+
+def _file_session_id(abspath: str, create: bool) -> str | None:
+    """Deterministic per-file claude session id. create=True mints (and saves) a
+    fresh one — each New session for this file; create=False returns the stored
+    one to resume, or None."""
+    s = _load_sessions()
+    if create:
+        sid = str(_uuid.uuid4())
+        s[abspath] = sid
+        try:
+            GLOBAL_SESSIONS.parent.mkdir(parents=True, exist_ok=True)
+            GLOBAL_SESSIONS.write_text(json.dumps(s, indent=2))
+        except Exception:
+            pass
+        return sid
+    return s.get(abspath)
 
 
 def build_term_parts(cfg: dict, file: Path, rel: str, host: str, port: int) -> tuple[str, str | None] | None:
