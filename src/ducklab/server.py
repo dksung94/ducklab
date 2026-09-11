@@ -828,6 +828,38 @@ img{{max-width:100%;display:block;margin:8px 14px;background:#fff}}</style>
         f.write_text(str(body.get("text", "")))
         return {"ok": True, "name": name, "source": scope, "path": str(f)}
 
+    _VARS_CODE = (
+        "import json as _dlj\n"
+        "def _dlvars():\n"
+        "    out=[]\n"
+        "    g=dict(globals())\n"
+        "    for k,v in g.items():\n"
+        "        if k.startswith('_') or k in ('In','Out','exit','quit','get_ipython'): continue\n"
+        "        import types as _t\n"
+        "        if isinstance(v,(_t.ModuleType,_t.FunctionType,_t.BuiltinFunctionType,type)): continue\n"
+        "        info={'name':k,'type':type(v).__name__}\n"
+        "        try:\n"
+        "            sh=getattr(v,'shape',None)\n"
+        "            if sh is not None: info['shape']=list(sh)\n"
+        "            elif hasattr(v,'__len__'): info['len']=len(v)\n"
+        "        except Exception: pass\n"
+        "        out.append(info)\n"
+        "    return out\n"
+        "print(_dlj.dumps(_dlvars()))\n"
+    )
+
+    @app.get("/api/vars")
+    async def api_vars(file: str | None = None):
+        s = hub.session(file)
+        if s.kernel is None or not s.kernel.alive():
+            return {"alive": False, "vars": []}
+        fut = s.executor.submit(s.kernel.run_silent, _VARS_CODE)
+        txt = await asyncio.wrap_future(fut)
+        try:
+            return {"alive": True, "vars": json.loads(txt.strip().splitlines()[-1])}
+        except Exception:
+            return {"alive": True, "vars": []}
+
     @app.get("/api/config")
     async def api_config_get(file: str | None = None):
         s = hub.session(file)

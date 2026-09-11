@@ -105,6 +105,18 @@ class FileKernel:
                 elif t == "error":
                     on_output({"kind": "error", "data": _strip_ansi("\n".join(c["traceback"]))})
 
+    def run_silent(self, code: str) -> str:
+        """Execute introspection code and return its stdout, broadcasting nothing."""
+        buf = []
+        self.execute(code, lambda o: buf.append(o["data"]) if o.get("kind") == "stream" else None)
+        return "".join(buf)
+
+    def alive(self) -> bool:
+        try:
+            return self.km.is_alive()
+        except Exception:
+            return False
+
     def interrupt(self):
         self.km.interrupt_kernel()
 
