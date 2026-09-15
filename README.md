@@ -113,11 +113,22 @@ curl -s  localhost:8787/api/cells?file=analysis.py            # list cells
 curl -sX POST 'localhost:8787/api/run/2?file=analysis.py'     # run cell 2, get outputs
 curl -sX POST 'localhost:8787/api/run_all?file=analysis.py'
 curl -s  'localhost:8787/api/outputs/2?file=analysis.py'
-curl -s  localhost:8787/api/kernels                           # who's alive, which file
+curl -s  localhost:8787/api/kernels                           # who's alive, which file, last_kill
+curl -sX POST localhost:8787/api/kernels/stop -H 'Content-Type: application/json' -d '{"file":"analysis.py"}'
+curl -s  'localhost:8787/api/export?file=analysis.py&code=hide' -o report.html   # outputs + markdown + figures only
 ```
 
 Runs share the same per-file FIFO queue and kernel as the browser — when the agent
-runs a cell, the human sees the output stream in live.
+runs a cell, the human sees the output stream in live. An API run re-reads the file if
+it changed since the last parse, so `sed -i ... && curl .../api/run/3` executes what
+you just wrote, not what the watcher last saw.
+
+Kernel guards (env): `DUCKLAB_KERNEL_MEM_GB` (default 16, 0 = off) stops a kernel whose
+RSS exceeds the cap; `DUCKLAB_KERNEL_IDLE_S` (default 0 = off) stops one that has not
+run for that long. Either stop is logged to stderr, shown in `/api/kernels` as
+`last_kill`, and reported as an error output on the NEXT run of that file — so an agent
+that never sees the browser toast still learns its state is gone. Deleting a file stops
+its kernel.
 
 ## Project boundary (ducklab is standalone)
 
