@@ -210,6 +210,8 @@ body.report .out{border-top:0}
 #drawer a:hover{background:var(--code)}
 #drawer a.cur{background:var(--accent);color:var(--accent-ink)}
 #drawer a .k{font-size:10px;opacity:.7;margin-left:6px}
+#drawer .dlist .dir{padding:7px 10px;color:var(--muted);
+ font:12.5px ui-monospace,Menlo,monospace;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 #drawer .khead{padding:10px 14px 4px;border-top:1px solid var(--rule);font-size:11px;font-weight:700;
  letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
 #drawer .krow{padding:7px 10px;margin:2px 6px;border:1px solid var(--rule);border-radius:8px;font-size:11.5px}
@@ -816,14 +818,16 @@ refreshEnvChip();
 
 // ---- files drawer ----
 const drawer=document.createElement("div"); drawer.id="drawer";
-drawer.innerHTML='<div class="dhead">workspace<br><b id="droot"></b><div style="margin-top:8px"><button id="newfile" style="font-size:12px;padding:4px 10px">＋ New file</button></div></div><div class="dlist" id="dlist"></div><div class="khead">outline</div><div class="olist" id="olist"></div><div class="khead">variables</div><div class="vlist" id="vlist"></div><div class="khead">kernels</div><div id="klist"></div><div class="khead">terminals</div><div id="tlist" style="padding-bottom:10px"></div>';
+drawer.innerHTML='<div class="dhead">workspace<br><b id="droot"></b><div style="margin-top:8px"><button id="newfile" style="font-size:12px;padding:4px 10px">＋ New file</button> <button id="newdir" style="font-size:12px;padding:4px 10px">＋ New folder</button></div></div><div class="dlist" id="dlist"></div><div class="khead">outline</div><div class="olist" id="olist"></div><div class="khead">variables</div><div class="vlist" id="vlist"></div><div class="khead">kernels</div><div id="klist"></div><div class="khead">terminals</div><div id="tlist" style="padding-bottom:10px"></div>';
 const scrim=document.createElement("div"); scrim.id="scrim";
 document.body.appendChild(scrim); document.body.appendChild(drawer);
 async function openDrawer(){
   const r=await fetch("/api/files"); const d=await r.json();
   document.getElementById("droot").textContent=d.root;
   const cur=document.getElementById("fname").textContent;
-  document.getElementById("dlist").innerHTML=d.files.map(p=>
+  document.getElementById("dlist").innerHTML=
+    (d.dirs||[]).map(p=>`<div class="dir">📁 ${p}</div>`).join("")+
+    d.files.map(p=>
     `<a href="/?file=${encodeURIComponent(p)}" class="${p===cur?'cur':''}">${p}${d.open.includes(p)?'<span class="k">●kernel</span>':''}</a>`).join("");
   drawer.classList.add("open"); scrim.classList.add("open");
   paintOutline(); paintVars(); paintKernels(); paintTerminals();
@@ -896,14 +900,25 @@ async function paintKernels(){
 function closeDrawer(){ drawer.classList.remove("open"); scrim.classList.remove("open"); }
 document.getElementById("filesbtn").onclick=openDrawer;
 drawer.addEventListener("click",async(e)=>{
-  if(e.target.id!=="newfile") return;
-  const name=prompt("New file path (relative to workspace, e.g. analysis/momentum.py)");
-  if(!name) return;
-  const r=await fetch("/api/files/new",{method:"POST",headers:{"Content-Type":"application/json"},
-    body:JSON.stringify({name})});
-  const d=await r.json();
-  if(!d.ok){ alert(d.error); return; }
-  location="/?file="+encodeURIComponent(d.file);
+  if(e.target.id==="newfile"){
+    const name=prompt("New file path (relative to workspace, e.g. analysis/momentum.py)");
+    if(!name) return;
+    const r=await fetch("/api/files/new",{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({name})});
+    const d=await r.json();
+    if(!d.ok){ alert(d.error); return; }
+    location="/?file="+encodeURIComponent(d.file);
+    return;
+  }
+  if(e.target.id==="newdir"){
+    const name=prompt("New folder path (relative to workspace, e.g. analysis/momentum)");
+    if(!name) return;
+    const r=await fetch("/api/dirs/new",{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({name})});
+    const d=await r.json();
+    if(!d.ok){ alert(d.error); return; }
+    openDrawer();   // no page to open — just re-render the tree in place
+  }
 });
 scrim.onclick=closeDrawer;
 

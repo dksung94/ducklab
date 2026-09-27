@@ -561,6 +561,19 @@ class Hub:
             out.append(str(p.relative_to(self.root)))
         return out
 
+    def list_dirs(self) -> list[str]:
+        """Directories are listed separately from files: list_files() feeds
+        resolve(), which only ever accepts a .py path."""
+        out = []
+        for p in sorted(self.root.rglob("*")):
+            if not p.is_dir():
+                continue
+            parts = p.relative_to(self.root).parts
+            if any(seg in SKIP_DIRS or seg.startswith(".") for seg in parts):
+                continue
+            out.append(str(p.relative_to(self.root)))
+        return out
+
 
 # ------------------------------------------------------------------- app ----
 def create_app(root: Path, initial: str | None = None, host: str = "127.0.0.1",
@@ -624,7 +637,7 @@ def create_app(root: Path, initial: str | None = None, host: str = "127.0.0.1",
     @app.get("/api/files")
     async def api_files():
         return {"root": str(hub.root), "files": hub.list_files(),
-                "open": sorted(hub.sessions)}
+                "dirs": hub.list_dirs(), "open": sorted(hub.sessions)}
 
     @app.post("/api/files/new")
     async def api_file_new(body: dict):
@@ -639,6 +652,19 @@ def create_app(root: Path, initial: str | None = None, host: str = "127.0.0.1",
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text(f"# %% {p.stem}\n\n")
         return {"ok": True, "file": str(p.relative_to(hub.root))}
+
+    @app.post("/api/dirs/new")
+    async def api_dir_new(body: dict):
+        name = str(body.get("name", "")).strip()
+        if not name:
+            return {"ok": False, "error": "name is required"}
+        p = (hub.root / name).resolve()
+        if not p.is_relative_to(hub.root) or p == hub.root:
+            return {"ok": False, "error": "path escapes workspace"}
+        if p.exists():
+            return {"ok": False, "error": f"{name} already exists"}
+        p.mkdir(parents=True)
+        return {"ok": True, "dir": str(p.relative_to(hub.root))}
 
     @app.get("/api/export")
     async def api_export(file: str | None = None):
