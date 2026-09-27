@@ -618,7 +618,7 @@ document.addEventListener("keydown",(e)=>{
   const mod = e.metaKey || e.ctrlKey;
   if(e.key==="Enter" && e.shiftKey){ e.preventDefault(); send({type:"run",cell:selId}); selectRel(1); }
   else if(e.key==="Enter" && mod){ e.preventDefault(); send({type:"run",cell:selId}); }
-  else if(e.key==="Enter"){ e.preventDefault(); if(cellData[selId]) openEditor(cellData[selId]); }
+  else if(e.key==="Enter"||e.key==="e"){ e.preventDefault(); if(cellData[selId]) openEditor(cellData[selId]); }
   else if(e.key==="j"||e.key==="ArrowDown"){ e.preventDefault(); selectRel(1); }
   else if(e.key==="k"||e.key==="ArrowUp"){ e.preventDefault(); selectRel(-1); }
   else if(e.key==="a"){ e.preventDefault(); send({type:"insert",cell:selId,where:"above"}); }
@@ -634,7 +634,7 @@ const help=document.createElement("div"); help.id="help";
 help.innerHTML=`<div class="card"><h3>Keyboard shortcuts</h3><table>
   <tr><td class="grp" colspan=2>Command mode (cell selected, not editing)</td></tr>
   <tr><td><kbd>j</kbd> / <kbd>↓</kbd>, <kbd>k</kbd> / <kbd>↑</kbd></td><td>Select next / previous cell</td></tr>
-  <tr><td><kbd>Enter</kbd></td><td>Edit selected cell</td></tr>
+  <tr><td><kbd>Enter</kbd> / <kbd>e</kbd></td><td>Edit selected cell</td></tr>
   <tr><td><kbd>Shift</kbd>+<kbd>Enter</kbd></td><td>Run and select next</td></tr>
   <tr><td><kbd>⌘</kbd>/<kbd>Ctrl</kbd>+<kbd>Enter</kbd></td><td>Run in place</td></tr>
   <tr><td><kbd>a</kbd> / <kbd>b</kbd></td><td>Insert cell above / below</td></tr>
