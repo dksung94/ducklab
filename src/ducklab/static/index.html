@@ -210,8 +210,11 @@ body.report .out{border-top:0}
 #drawer a:hover{background:var(--code)}
 #drawer a.cur{background:var(--accent);color:var(--accent-ink)}
 #drawer a .k{font-size:10px;opacity:.7;margin-left:6px}
-#drawer .dlist .dir{padding:7px 10px;color:var(--muted);
+#drawer .dlist .dir{padding:7px 10px;border-radius:8px;color:var(--ink);cursor:pointer;user-select:none;
  font:12.5px ui-monospace,Menlo,monospace;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#drawer .dlist .dir:hover{background:var(--code)}
+#drawer .dlist .dir .car{display:inline-block;width:1em;color:var(--muted)}
+#drawer .dlist .kids[hidden]{display:none}
 #drawer .khead{padding:10px 14px 4px;border-top:1px solid var(--rule);font-size:11px;font-weight:700;
  letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
 #drawer .krow{padding:7px 10px;margin:2px 6px;border:1px solid var(--rule);border-radius:8px;font-size:11.5px}
@@ -825,10 +828,7 @@ async function openDrawer(){
   const r=await fetch("/api/files"); const d=await r.json();
   document.getElementById("droot").textContent=d.root;
   const cur=document.getElementById("fname").textContent;
-  document.getElementById("dlist").innerHTML=
-    (d.dirs||[]).map(p=>`<div class="dir">📁 ${p}</div>`).join("")+
-    d.files.map(p=>
-    `<a href="/?file=${encodeURIComponent(p)}" class="${p===cur?'cur':''}">${p}${d.open.includes(p)?'<span class="k">●kernel</span>':''}</a>`).join("");
+  document.getElementById("dlist").innerHTML=renderTree(d, cur);
   drawer.classList.add("open"); scrim.classList.add("open");
   paintOutline(); paintVars(); paintKernels(); paintTerminals();
 }
@@ -897,9 +897,49 @@ async function paintKernels(){
     await fetch("/api/kernels/restart",{method:"POST",headers:{"Content-Type":"application/json"},
       body:JSON.stringify({file:b.dataset.krestart})}); paintKernels();});
 }
+// The drawer is a tree: folders open and close on click, and the folders on the way to the
+// open file start expanded. Which folders are open is remembered per browser.
+const TREE_KEY="ducklab.tree.open";
+function treeOpen(){ try{ return new Set(JSON.parse(localStorage.getItem(TREE_KEY)||"[]")); }catch(e){ return new Set(); } }
+function saveTreeOpen(set){ try{ localStorage.setItem(TREE_KEY, JSON.stringify([...set])); }catch(e){} }
+function escTree(t){ return String(t).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
+function renderTree(d, cur){
+  const root={dirs:new Map(), files:[]};
+  const node=(path)=>{ let n=root; if(!path) return n;
+    for(const seg of path.split("/")){ if(!n.dirs.has(seg)) n.dirs.set(seg,{dirs:new Map(), files:[]}); n=n.dirs.get(seg); }
+    return n; };
+  (d.dirs||[]).forEach(p=>node(p));
+  d.files.forEach(p=>{ const i=p.lastIndexOf("/"); node(i<0?"":p.slice(0,i)).files.push(p); });
+  const open=treeOpen();
+  if(cur){ const segs=cur.split("/"); for(let i=1;i<segs.length;i++) open.add(segs.slice(0,i).join("/")); }
+  const draw=(n, prefix, depth)=>{
+    const pad=`padding-left:${10+depth*14}px`;
+    let h="";
+    for(const [name,child] of [...n.dirs.entries()].sort((a,b)=>a[0].localeCompare(b[0]))){
+      const path=prefix?`${prefix}/${name}`:name, isOpen=open.has(path);
+      h+=`<div class="dir" data-path="${escTree(path)}" style="${pad}"><span class="car">${isOpen?"▾":"▸"}</span>📁 ${escTree(name)}</div>`
+        +`<div class="kids"${isOpen?"":" hidden"}>${draw(child, path, depth+1)}</div>`;
+    }
+    for(const p of n.files.sort()){
+      const base=p.slice(p.lastIndexOf("/")+1);
+      h+=`<a href="/?file=${encodeURIComponent(p)}" class="${p===cur?'cur':''}" style="${pad}" title="${escTree(p)}">${escTree(base)}${d.open.includes(p)?'<span class="k">●kernel</span>':''}</a>`;
+    }
+    return h;
+  };
+  return draw(root, "", 0);
+}
 function closeDrawer(){ drawer.classList.remove("open"); scrim.classList.remove("open"); }
 document.getElementById("filesbtn").onclick=openDrawer;
 drawer.addEventListener("click",async(e)=>{
+  const dir=e.target.closest(".dir");
+  if(dir){
+    const kids=dir.nextElementSibling, open=treeOpen(), path=dir.dataset.path;
+    const opening=kids.hidden; kids.hidden=!opening;
+    dir.querySelector(".car").textContent=opening?"▾":"▸";
+    if(opening) open.add(path); else open.delete(path);
+    saveTreeOpen(open);
+    return;
+  }
   if(e.target.id==="newfile"){
     const name=prompt("New file path (relative to workspace, e.g. analysis/momentum.py)");
     if(!name) return;
