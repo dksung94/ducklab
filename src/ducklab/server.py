@@ -36,7 +36,7 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from ptyprocess import PtyProcessUnicode
-from watchfiles import awatch
+from watchfiles import Change, awatch
 
 from .cells import (comment_md, delete_cell, duplicate_cell, insert_cell, move_cell,
                     parse_cells, replace_cell, replace_cell_source, uncomment_md)
@@ -51,6 +51,7 @@ EXPERIMENTS_REL = ".ducklab/experiments.jsonl"   # generic run log; any producer
 PROMPTS_SUBDIR = ".ducklab/prompts"
 SKIP_DIRS = {".venv", "venv", "node_modules", "__pycache__", ".git", ".ipynb_checkpoints"}
 KERNEL_MEM_CAP_GB = float(os.environ.get("DUCKLAB_KERNEL_MEM_GB", "16"))  # 0 = off
+KERNEL_IDLE_S = float(os.environ.get("DUCKLAB_KERNEL_IDLE_S", "0"))       # 0 = off; stop a kernel idle this long
 
 
 def rss_mb(pid) -> float | None:
@@ -283,6 +284,17 @@ def compose_prompt(root: Path, cfg: dict, dirpath: Path, filename: str,
 
 
 # --------------------------------------------------------------- session ----
+_RESTORE_INLINE = (
+    "import sys as _dl_sys\n"
+    "if 'matplotlib' in _dl_sys.modules:\n"
+    "    import matplotlib as _dl_m\n"
+    "    if _dl_m.get_backend().lower() in ('agg', 'pdf', 'ps', 'svg', 'cairo', 'template'):\n"
+    "        get_ipython().run_line_magic('matplotlib', 'inline')\n"
+    "    del _dl_m\n"
+    "del _dl_sys\n"
+)
+
+
 class Session:
     """One open file: kernel, parsed cells, kept outputs, connected clients."""
 
@@ -292,6 +304,8 @@ class Session:
         self.python = python          # interpreter for this file's kernel (None = server's)
         self.kernel: FileKernel | None = None
         self.cells = parse_cells(file.read_text())
+        self.parsed_mtime_ns = file.stat().st_mtime_ns   # what self.cells was parsed from
+        self.last_kill: dict | None = None               # set by the watchdog; surfaced on the next run
         self.outputs: dict[str, list[dict]] = {}
         self.clients: set[WebSocket] = set()
         self.loop: asyncio.AbstractEventLoop | None = None
@@ -375,8 +389,27 @@ class Session:
         self.last_run_at = time.time()
         self.run_count += 1
         t0 = time.time()
+        if self.kernel is None and self.last_kill:
+            # The watchdog stopped the previous kernel between two runs. Without this
+            # line the next cell silently starts on a fresh kernel and fails with a
+            # NameError three lines in -- an API caller never saw the kill (it only
+            # went to websocket clients as a toast). A stream line, not an error: the cell
+            # itself may well succeed, and API callers that fail a run on any error output
+            # (forge's run_all) must not fail a clean run because an earlier kernel died.
+            k = self.last_kill
+            on_output({"kind": "stream", "data": f"[ducklab] WARNING: previous kernel was stopped ({k['reason']}: "
+                       f"{k['detail']}) at {time.strftime('%H:%M:%S', time.localtime(k['at']))} -- "
+                       f"its state is gone; this cell runs on a fresh kernel\n"})
+            self.last_kill = None
         try:
-            self.ensure_kernel().execute(cell.source, on_output)
+            kernel = self.ensure_kernel()
+            # `%matplotlib inline` was set once at kernel start; a library import that
+            # calls matplotlib.use("Agg") afterwards silently turns plt.show() into
+            # nothing. Restore inline ONLY from a non-interactive backend, so a user
+            # who chose `%matplotlib widget`/`qt` keeps it; skip entirely when
+            # matplotlib was never imported (no import cost on plain kernels).
+            kernel.execute(_RESTORE_INLINE, lambda o: None, silent=True)
+            kernel.execute(cell.source, on_output)
         except Exception as e:  # surface infra failures as a cell error, never swallow
             on_output({"kind": "error", "data": f"[ducklab] {type(e).__name__}: {e}"})
         finally:
@@ -387,7 +420,21 @@ class Session:
                                   "mem": rss_mb(self.kernel.pid if self.kernel else None)})
             self.save_outputs()
 
+    def reparse_if_stale(self) -> bool:
+        """The file watcher debounces; an API run that lands inside that window used to
+        execute the PREVIOUS source (an agent edits with sed and runs 200 ms later).
+        Cheap stat, so every API entry point calls it before touching self.cells."""
+        try:
+            m = self.file.stat().st_mtime_ns
+        except FileNotFoundError:
+            return False
+        if m == self.parsed_mtime_ns:
+            return False
+        self.reparse()
+        return True
+
     def reparse(self):
+        self.parsed_mtime_ns = self.file.stat().st_mtime_ns
         self.cells = parse_cells(self.file.read_text())
         live = {c.id for c in self.cells}
         self.outputs = {k: v for k, v in self.outputs.items() if k in live}
@@ -543,6 +590,17 @@ class Hub:
             raise FileNotFoundError(rel)
         return str(p.relative_to(self.root))
 
+    def existing(self, rel: str | None) -> Session | None:
+        """A session whose file may no longer exist (deleted under a live kernel).
+        `session()` resolves through the filesystem and raises -- which made
+        /api/kernels/stop 500 on exactly the file whose kernel you most want gone."""
+        if rel and rel in self.sessions:
+            return self.sessions[rel]
+        try:
+            return self.sessions.get(self.resolve(rel))
+        except FileNotFoundError:
+            return None
+
     def session(self, rel: str | None) -> Session:
         rel = self.resolve(rel)
         if rel not in self.sessions:
@@ -595,8 +653,17 @@ def create_app(root: Path, initial: str | None = None, host: str = "127.0.0.1",
         server) — so cap it: if a kernel's RSS exceeds DUCKLAB_KERNEL_MEM_GB, kill
         it and tell the client. The server survives; the notebook can restart."""
         cap_mb = KERNEL_MEM_CAP_GB * 1024
-        if cap_mb <= 0:
+        if cap_mb <= 0 and KERNEL_IDLE_S <= 0:
             return
+
+        async def _stop(s: Session, k, reason: str, detail: str):
+            await asyncio.get_running_loop().run_in_executor(s.executor, k.shutdown)
+            s.kernel = None
+            s.last_kill = {"reason": reason, "detail": detail, "at": time.time()}
+            print(f"[ducklab] kernel stopped ({reason}) for {s.rel}: {detail}", file=_sys.stderr, flush=True)
+            await s.send_all({"type": "toast", "text": f"Kernel stopped ({reason}): {detail}"})
+            await s.send_all({"type": "status", "state": "stopped"})
+
         while True:
             await asyncio.sleep(3)
             for rel, s in list(hub.sessions.items()):
@@ -604,23 +671,33 @@ def create_app(root: Path, initial: str | None = None, host: str = "127.0.0.1",
                 if not k:
                     continue
                 mb = rss_mb(getattr(k, "pid", None))
-                if mb and mb > cap_mb:
-                    await asyncio.get_running_loop().run_in_executor(s.executor, k.shutdown)
-                    s.kernel = None
-                    await s.send_all({"type": "toast",
-                        "text": f"Kernel stopped: exceeded {KERNEL_MEM_CAP_GB:.0f}GB ({mb:.0f}MB)"})
-                    await s.send_all({"type": "status", "state": "stopped"})
+                if cap_mb > 0 and mb and mb > cap_mb:
+                    await _stop(s, k, "mem_cap", f"exceeded {KERNEL_MEM_CAP_GB:g}GB ({mb:.0f}MB)")
+                    continue
+                if KERNEL_IDLE_S > 0 and not k._lock.locked():
+                    idle = time.time() - (s.last_run_at or getattr(k, "started_at", time.time()))
+                    if idle > KERNEL_IDLE_S:
+                        await _stop(s, k, "idle", f"no run for {idle:.0f}s (cap {KERNEL_IDLE_S:g}s)")
 
     async def _watch():
-        async for changes in awatch(hub.root):
+        async for changes in awatch(hub.root, debounce=400):
             touched = set()
-            for _, path in changes:
+            for change, path in changes:
                 try:
                     rel = str(Path(path).resolve().relative_to(hub.root))
                 except ValueError:
                     continue
-                if rel in hub.sessions:
-                    touched.add(rel)
+                if rel not in hub.sessions:
+                    continue
+                if change == Change.deleted and not (hub.root / rel).exists():
+                    # otherwise the kernel outlives its file with no API able to reach it
+                    s = hub.sessions.pop(rel)
+                    if s.kernel:
+                        await asyncio.get_running_loop().run_in_executor(s.executor, s.kernel.shutdown)
+                        s.kernel = None
+                    print(f"[ducklab] {rel} deleted; its kernel was stopped", file=_sys.stderr, flush=True)
+                    continue
+                touched.add(rel)
             for rel in touched:
                 s = hub.sessions[rel]
                 try:
@@ -667,10 +744,14 @@ def create_app(root: Path, initial: str | None = None, host: str = "127.0.0.1",
         return {"ok": True, "dir": str(p.relative_to(hub.root))}
 
     @app.get("/api/export")
-    async def api_export(file: str | None = None):
+    async def api_export(file: str | None = None, code: str = "show"):
         """A standalone HTML report of the file: cells + their current outputs
-        (markdown rendered, code highlighted-plain, images inlined)."""
+        (markdown rendered, code highlighted-plain, images inlined).
+        `code=hide` drops the source blocks -- outputs, markdown and figures only,
+        which is what a reader of the RESULT wants (and what a printed PDF needs)."""
         s = hub.session(file)
+        s.reparse_if_stale()
+        hide_code = "pre.code{display:none} .cell{border:0}" if code == "hide" else ""
         def esc(x): return _html.escape(x or "")
         def md(text):
             out = []
@@ -704,7 +785,8 @@ def create_app(root: Path, initial: str | None = None, host: str = "127.0.0.1",
 <style>body{{max-width:900px;margin:24px auto;padding:0 16px;font:15px/1.6 -apple-system,system-ui,sans-serif;color:#1c1e21}}
 .md h1,.md h2,.md h3{{margin:.6em 0 .3em}} .md li{{margin-left:1.2em}}
 .cell{{margin:14px 0;border:1px solid #e3e0d8;border-radius:10px;overflow:hidden}}
-pre.code{{margin:0;padding:12px 14px;background:#f0eee8;font:12.5px ui-monospace,Menlo,monospace;overflow-x:auto}}
+pre.code{{margin:0;padding:12px 14px;background:#f0eee8;font:12.5px ui-monospace,Menlo,monospace;white-space:pre-wrap;overflow-x:auto}}
+{hide_code}
 pre.out,pre.err{{margin:0;padding:8px 14px;font:12px ui-monospace,Menlo,monospace;white-space:pre-wrap}}
 pre.err{{color:#a6392f;border-left:3px solid #a6392f}}
 .rich{{padding:8px 14px;overflow-x:auto}} .rich table{{border-collapse:collapse;font-size:12.5px}}
@@ -718,12 +800,16 @@ img{{max-width:100%;display:block;margin:8px 14px;background:#fff}}</style>
     @app.get("/api/cells")
     async def api_cells(file: str | None = None):
         s = hub.session(file)
+        if s.reparse_if_stale():
+            await s.send_all(s.cells_msg())
         return [{"idx": c.idx, "id": c.id, "title": c.title, "lineno": c.lineno,
                  "has_output": bool(s.outputs.get(c.id))} for c in s.cells]
 
     @app.post("/api/run/{ref}")
     async def api_run(ref: str, file: str | None = None, wait: bool = True, images: str = "elide"):
         s = hub.session(file)
+        if s.reparse_if_stale():
+            await s.send_all(s.cells_msg())
         cell = s.find_cell(ref)
         if cell is None:
             return {"ok": False, "error": f"no cell {ref!r}; see /api/cells"}
@@ -737,6 +823,8 @@ img{{max-width:100%;display:block;margin:8px 14px;background:#fff}}</style>
     @app.post("/api/run_all")
     async def api_run_all(file: str | None = None, wait: bool = True, images: str = "elide"):
         s = hub.session(file)
+        if s.reparse_if_stale():
+            await s.send_all(s.cells_msg())
         futs = [(c, s.submit_run(c.id)) for c in s.cells]
         if wait:
             for _, fut in futs:
@@ -777,13 +865,15 @@ img{{max-width:100%;display:block;margin:8px 14px;background:#fff}}</style>
                 "rss_mb": _rss_mb(getattr(k, "pid", None)) if k else None,
                 "started_at": getattr(k, "started_at", None) if k else None,
                 "last_run_at": s.last_run_at, "runs": s.run_count,
-                "clients": len(s.clients),
+                "clients": len(s.clients), "last_kill": s.last_kill,
             })
         return {"kernels": rows}
 
     @app.post("/api/kernels/stop")
     async def api_kernel_stop(body: dict):
-        s = hub.session(body.get("file"))
+        s = hub.existing(body.get("file"))
+        if s is None:
+            return {"ok": False, "error": f"no session for {body.get('file')!r}; see /api/kernels"}
         if s.kernel:
             await asyncio.get_running_loop().run_in_executor(s.executor, s.kernel.shutdown)
             s.kernel = None
@@ -792,7 +882,9 @@ img{{max-width:100%;display:block;margin:8px 14px;background:#fff}}</style>
 
     @app.post("/api/kernels/restart")
     async def api_kernel_restart(body: dict):
-        s = hub.session(body.get("file"))
+        s = hub.existing(body.get("file"))
+        if s is None:
+            return {"ok": False, "error": f"no session for {body.get('file')!r}; see /api/kernels"}
         if s.kernel:
             await asyncio.get_running_loop().run_in_executor(s.executor, s.kernel.restart)
         await s.send_all({"type": "status", "state": "restarted"})

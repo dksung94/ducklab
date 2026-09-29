@@ -69,10 +69,11 @@ class FileKernel:
         self._lock = threading.Lock()  # one execution at a time per kernel
         self.execute("%matplotlib inline", lambda o: None)
 
-    def execute(self, code: str, on_output: Callable[[Output], None]) -> None:
-        """Run code, streaming outputs to on_output until the kernel goes idle."""
+    def execute(self, code: str, on_output: Callable[[Output], None], silent: bool = False) -> None:
+        """Run code, streaming outputs to on_output until the kernel goes idle.
+        silent=True: housekeeping code that must not bump the execution count or history."""
         with self._lock:
-            msg_id = self.kc.execute(code)
+            msg_id = self.kc.execute(code, silent=silent, store_history=not silent)
             while True:
                 try:
                     # Short poll, no overall deadline: a long-running cell
